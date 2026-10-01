@@ -110,8 +110,47 @@ per-user/IP rate limiting + virtual waiting room · seat categories / dynamic
 pricing in the amount calculation · sharded hot shows and Redis pre-filter ·
 read replicas for show state · outbox events for downstream consumers.
 
-## AI usage
+## AI usage (G22 disclosure log)
 
-See G22 (disclosure log committed next): every lock, hash and guard above
-was directed — AI drafted boilerplate (DTOs, config, burst scaffolding) and
-at least one unsafe read-then-write it proposed was rejected in review.
+Built with an agentic coding assistant (OpenCode, Muse Spark) under
+per-goal direction. Honest split:
+
+**Directed — I chose, the agent executed.** Flyway over
+`ddl-auto=create` (I initially picked `ddl-auto`, then reversed after the
+agent laid out the costs: no partial-index/`CHECK` support, data loss on
+restart, DoD failure); goal sequencing G1→G22; the brief's locked policies
+(all-or-nothing, explicit cancel, replay-`200`, consistency-over-availability);
+Render as deploy target; when to push.
+
+**Decided — the agent proposed, I accepted.** `JdbcTemplate` over JPA on
+all paths; `SHA-256(show_id | sorted seats)` fingerprint format;
+conditional-update quota SQL; programmatic `TransactionTemplate` + retry
+helper instead of `@Transactional`/`spring-retry`; global `SNAKE_CASE`;
+aggregate (label-free) gauges; `set_config` session-timeout init SQL;
+`EnvironmentPostProcessor` URL normalization instead of a hand-built
+`DataSource` bean; Java single-file burst over k6.
+
+**Rejected or fixed in review (with evidence).**
+- `ddl-auto=create`: rejected post-discussion (see above).
+- `@Valid` on `DevTokenController` produced Boot-default 400 bodies
+  instead of the uniform `ApiError` — caught by
+  `DevTokenControllerTest.invalidUserIdIs400`, replaced with manual
+  validation (`fix` visible in history).
+- `@WebMvcTest` silently falling back to default security (all-POST 403
+  with empty bodies) — caught by `ShowControllerTest`, fixed with explicit
+  `@Import(SecurityConfig.class)`.
+- Read-then-write audit (the unsafe pattern from the brief): verified the
+  only pre-lock read is the immutable show row; every contested read holds
+  `FOR UPDATE` locks. The cancel path had a real instance of the cousin
+  bug — concurrent double-cancel double-decrementing quota — identified
+  while writing it and fixed with guarded-transition + rollback-and-reread
+  before any test ran (`concurrentDoubleCancelIsIdempotent` now proves it).
+- Burst `code()` helper mis-parsing the nested `error` object (would have
+  broken every 409 assertion) — caught in self-review pre-compile; plus
+  `CannotGetJdbcConnectionException` (spring-jdbc, not spring-dao) and the
+  Micrometer 1.16 `prometheusmetrics` rename — caught by compiler/tests.
+
+I can extend this live: every lock's order is documented in
+`ReservationService`'s javadoc, and each guarantee has a named
+Testcontainers test (`ReserveServiceIT`, `SchemaInvariantIT`,
+`ShowServiceIT`) runnable via `./mvnw verify`.
