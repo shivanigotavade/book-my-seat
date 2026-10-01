@@ -15,8 +15,8 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.bookmyseat.common.TransactionRetry;
-
 import com.bookmyseat.idempotency.RequestHasher;
+import com.bookmyseat.observability.ReservationMetrics;
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -61,17 +61,33 @@ public class ReservationService {
 	private final JdbcTemplate jdbc;
 	private final TransactionTemplate tx;
 	private final TransactionRetry retry;
+	private final ReservationMetrics metrics;
 
-	public ReservationService(JdbcTemplate jdbc, PlatformTransactionManager txManager) {
+	public ReservationService(JdbcTemplate jdbc, PlatformTransactionManager txManager, ReservationMetrics metrics) {
 		this.jdbc = jdbc;
 		this.tx = new TransactionTemplate(txManager);
 		this.tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-		this.retry = new TransactionRetry();
+		this.metrics = metrics;
+		this.retry = new TransactionRetry(3, 25, metrics::retried);
 	}
 
 	public ReserveOutcome reserve(UUID showId, List<String> seats, JsonNode bodyKey, String headerKey,
 			AuthPrincipal caller) {
-		return retry.run(() -> tx.execute(status -> reserveTx(showId, seats, bodyKey, headerKey, caller)));
+		try {
+			ReserveOutcome outcome = retry
+					.run(() -> tx.execute(status -> reserveTx(showId, seats, bodyKey, headerKey, caller)));
+			if (outcome.replayed()) {
+				metrics.replayed();
+			}
+			else {
+				metrics.confirmed();
+			}
+			return outcome;
+		}
+		catch (ApiException e) {
+			metrics.declined(e.getCode());
+			throw e;
+		}
 	}
 
 	private ReserveOutcome reserveTx(UUID showId, List<String> seats, JsonNode bodyKey, String headerKey,
@@ -246,12 +262,19 @@ public class ReservationService {
 	public CancelResponse cancel(UUID reservationId, AuthPrincipal caller) {
 		for (int i = 0; i < 3; i++) {
 			try {
-				return retry.run(() -> tx.execute(status -> cancelTx(reservationId, caller)));
+				CancelResponse response = retry.run(() -> tx.execute(status -> cancelTx(reservationId, caller)));
+				metrics.cancelled();
+				metrics.released(response.seats().size());
+				return response;
 			}
 			catch (CancelConflictException e) {
 				// Lost a concurrent-cancel race after touching quota; the whole
 				// attempt rolled back, so re-reading is safe (next pass sees
 				// cancelled → idempotent 200).
+			}
+			catch (ApiException e) {
+				metrics.declined(e.getCode());
+				throw e;
 			}
 		}
 		return readCancelState(reservationId, caller);

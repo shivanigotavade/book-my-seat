@@ -44,6 +44,9 @@ class ShowServiceIT {
 	@Autowired
 	JdbcTemplate jdbc;
 
+	@Autowired
+	io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
 	private static final ObjectMapper JSON = new ObjectMapper();
 
 	private static CreateShowRequest request(String name, List<String> seats, String price, String limit) {
@@ -124,6 +127,35 @@ class ShowServiceIT {
 		assertThatThrownBy(() -> shows.getShow(java.util.UUID.randomUUID(), false))
 				.isInstanceOfSatisfying(ApiException.class,
 						e -> assertThat(e.getCode()).isEqualTo("NOT_FOUND"));
+	}
+
+	@Test
+	void gaugesAndCountersReconcileWithApi() throws Exception {
+		ShowResponse created = shows.createShow(request("Gauges", List.of("G1", "G2"), "100", null));
+		double confirmedBefore = gauge("bookmyseat_seats_confirmed");
+		double availableBefore = gauge("bookmyseat_seats_available");
+
+		reserves.reserve(created.id(), List.of("G1"),
+				com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode("gk-1"), null,
+				new AuthPrincipal("alice", "USER"));
+
+		// Gauges cache for 1s; wait past the TTL so the scrape re-queries.
+		Thread.sleep(1100);
+		assertThat(gauge("bookmyseat_seats_confirmed")).isEqualTo(confirmedBefore + 1);
+		assertThat(gauge("bookmyseat_seats_available")).isEqualTo(availableBefore - 1);
+		assertThat(counter("bookmyseat_reservations_confirmed_total")).isGreaterThanOrEqualTo(1);
+	}
+
+	private double gauge(String name) {
+		var gauge = meterRegistry.find(name).gauge();
+		assertThat(gauge).as("gauge %s registered", name).isNotNull();
+		return gauge.value();
+	}
+
+	private double counter(String name) {
+		var counter = meterRegistry.find(name).counter();
+		assertThat(counter).as("counter %s registered", name).isNotNull();
+		return counter.count();
 	}
 
 	@Test

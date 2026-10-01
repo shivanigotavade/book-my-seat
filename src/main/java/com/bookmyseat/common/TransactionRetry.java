@@ -2,6 +2,7 @@ package com.bookmyseat.common;
 
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import org.springframework.dao.CannotAcquireLockException;
@@ -24,14 +25,22 @@ public final class TransactionRetry {
 
 	private final int maxAttempts;
 	private final long baseBackoffMillis;
+	private final Consumer<String> retryListener;
 
 	public TransactionRetry() {
-		this(3, 25);
+		this(3, 25, cause -> {
+		});
 	}
 
 	TransactionRetry(int maxAttempts, long baseBackoffMillis) {
+		this(maxAttempts, baseBackoffMillis, cause -> {
+		});
+	}
+
+	public TransactionRetry(int maxAttempts, long baseBackoffMillis, Consumer<String> retryListener) {
 		this.maxAttempts = maxAttempts;
 		this.baseBackoffMillis = baseBackoffMillis;
+		this.retryListener = retryListener;
 	}
 
 	public <T> T run(Supplier<T> work) {
@@ -49,22 +58,32 @@ public final class TransactionRetry {
 					throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "RETRY_LATER",
 							"Contention; retry with the same key.");
 				}
+				retryListener.accept(causeOf(e));
 				sleep(attempt);
 			}
 		}
 	}
 
 	static boolean isTransient(Throwable t) {
+		return causeOf(t) != null;
+	}
+
+	private static String causeOf(Throwable t) {
+		boolean pool = false;
 		for (Throwable cur = t; cur != null; cur = cur.getCause()) {
 			if (cur instanceof CannotGetJdbcConnectionException || cur instanceof CannotAcquireLockException) {
-				return true;
+				pool = true;
 			}
 			if (cur instanceof java.sql.SQLException sql && sql.getSQLState() != null
 					&& TRANSIENT_STATES.contains(sql.getSQLState())) {
-				return true;
+				return switch (sql.getSQLState()) {
+				case "40P01" -> "deadlock";
+				case "40001" -> "serialization";
+				default -> "lock-timeout";
+				};
 			}
 		}
-		return false;
+		return pool ? "pool" : null;
 	}
 
 	private void sleep(int attempt) {
