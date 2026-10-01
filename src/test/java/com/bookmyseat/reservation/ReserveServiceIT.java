@@ -1,0 +1,167 @@
+package com.bookmyseat.reservation;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import com.bookmyseat.security.AuthPrincipal;
+import com.bookmyseat.show.CreateShowRequest;
+import com.bookmyseat.show.ShowService;
+import com.bookmyseat.web.ApiException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+/**
+ * G5 acceptance against real PostgreSQL 16: one winner per hot seat, clean
+ * 409s, no 5xx-shaped surprises (every decline is {@link ApiException}).
+ * Skipped without Docker (CI runs it).
+ */
+@SpringBootTest
+@Testcontainers(disabledWithoutDocker = true)
+class ReserveServiceIT {
+
+	@Container
+	@org.springframework.boot.testcontainers.service.connection.ServiceConnection
+	static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine");
+
+	@Autowired
+	ShowService shows;
+
+	@Autowired
+	ReservationService reserves;
+
+	@Autowired
+	JdbcTemplate jdbc;
+
+	private static final ObjectMapper JSON = new ObjectMapper();
+
+	private static final AuthPrincipal ALICE = new AuthPrincipal("alice", "USER");
+
+	private UUID createShow(List<String> seats, String price, String limit) {
+		try {
+			var request = new CreateShowRequest("Hot Sale", seats, JSON.readTree(price),
+					limit == null ? null : JSON.readTree(limit));
+			return shows.createShow(request).id();
+		}
+		catch (Exception e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	private static com.fasterxml.jackson.databind.JsonNode key(String k) {
+		try {
+			return JSON.readTree("\"" + k + "\"");
+		}
+		catch (Exception e) {
+			throw new IllegalArgumentException(e);
+		}
+	}
+
+	@Test
+	void hotSeatRaceYieldsExactlyOneWinner() throws Exception {
+		UUID showId = createShow(List.of("A12", "A13"), "25000", null);
+		int racers = 100;
+		var start = new CountDownLatch(1);
+		var done = new CountDownLatch(racers);
+		var winners = new AtomicInteger();
+		var codes = new ConcurrentHashMap<String, AtomicInteger>();
+		var unexpected = new ConcurrentHashMap<String, String>();
+
+		try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+			for (int i = 0; i < racers; i++) {
+				final int n = i;
+				pool.submit(() -> {
+					try {
+						start.await();
+						reserves.reserve(showId, List.of("A12"), key("k-" + n),
+								null, new AuthPrincipal("u-" + n, "USER"));
+						winners.incrementAndGet();
+					}
+					catch (ApiException e) {
+						codes.computeIfAbsent(e.getCode(), c -> new AtomicInteger()).incrementAndGet();
+					}
+					catch (Exception e) {
+						unexpected.put("u-" + n, e.toString());
+					}
+					finally {
+						done.countDown();
+					}
+					return null;
+				});
+			}
+			start.countDown();
+			assertThat(done.await(120, TimeUnit.SECONDS)).isTrue();
+		}
+
+		assertThat(unexpected).isEmpty();
+		assertThat(winners.get()).isEqualTo(1);
+		assertThat(codes.getOrDefault("SEAT_TAKEN", new AtomicInteger()).get()).isEqualTo(racers - 1);
+		assertThat(codes.keySet()).containsExactly("SEAT_TAKEN");
+
+		Integer active = jdbc.queryForObject(
+				"SELECT COUNT(*) FROM reservation_seats WHERE show_id = ? AND seat_label = 'A12' AND active",
+				Integer.class, showId);
+		assertThat(active).isEqualTo(1);
+	}
+
+	@Test
+	void sequentialSecondBookingDeclined() {
+		UUID showId = createShow(List.of("A12", "A13"), "25000", null);
+		ReserveResponse first = reserves.reserve(showId, List.of("A13"), key("k-1"), null, ALICE);
+		assertThat(first.status()).isEqualTo("confirmed");
+		assertThat(first.amountPaise()).isEqualTo(25000L);
+
+		assertThatThrownBy(
+				() -> reserves.reserve(showId, List.of("A13"), key("k-2"), null,
+						new AuthPrincipal("bob", "USER")))
+				.isInstanceOf(ApiException.class).hasMessageContaining("no longer available");
+	}
+
+	@Test
+	void unknownSeatAndShowAre404() {
+		UUID showId = createShow(List.of("A12"), "25000", null);
+		assertThatThrownBy(() -> reserves.reserve(showId, List.of("ZZ9"), key("k-1"), null, ALICE))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("INVALID_SEAT"));
+		assertThatThrownBy(() -> reserves.reserve(UUID.randomUUID(), List.of("A12"), key("k-1"), null, ALICE))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("NOT_FOUND"));
+	}
+
+	@Test
+	void overLimitRequestFailsFast() {
+		UUID showId = createShow(List.of("A1", "A2", "A3"), "100", "2");
+		assertThatThrownBy(() -> reserves.reserve(showId, List.of("A1", "A2", "A3"), key("k-1"), null, ALICE))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("PER_USER_LIMIT"));
+	}
+
+	@Test
+	void ownerComesFromTokenAndAmountMultiplies() {
+		UUID showId = createShow(List.of("A1", "A2"), "25000", null);
+		ReserveResponse response = reserves.reserve(showId, List.of("A2", "A1"), key("k-1"), null, ALICE);
+		assertThat(response.userId()).isEqualTo("alice");
+		assertThat(response.seats()).containsExactly("A1", "A2");
+		assertThat(response.amountPaise()).isEqualTo(50000L);
+
+		Map<String, Object> row = jdbc.queryForMap("SELECT user_id FROM seats WHERE show_id = ? AND seat_label = 'A1'",
+				showId);
+		assertThat(row.get("user_id")).isEqualTo("alice");
+	}
+}

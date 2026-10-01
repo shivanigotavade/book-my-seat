@@ -9,6 +9,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import com.bookmyseat.observability.RequestIdFilter;
 
@@ -39,7 +40,8 @@ public class GlobalExceptionHandler {
 				ApiError.of("VALIDATION_ERROR", "Validation failed.", Map.of("fields", fields), requestId));
 	}
 
-	@ExceptionHandler({ HttpMessageNotReadableException.class, ConstraintViolationException.class })
+	@ExceptionHandler({ HttpMessageNotReadableException.class, ConstraintViolationException.class,
+			MethodArgumentTypeMismatchException.class })
 	public ResponseEntity<ApiError> handleBadBody(Exception ex, HttpServletRequest request) {
 		String requestId = RequestIdFilter.resolve(request);
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
