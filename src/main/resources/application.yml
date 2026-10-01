@@ -21,6 +21,9 @@ spring:
       connection-timeout: 30000
       max-lifetime: 600000
       auto-commit: true
+      # G12: bound worst-case waits per session. Breaches surface as SQLState
+      # 55P03 and flow into the contention retry, then 429 — never a 5xx.
+      connection-init-sql: "SELECT set_config('lock_timeout', '8s', false), set_config('statement_timeout', '25s', false)"
   flyway:
     enabled: true
     locations: classpath:db/migration
