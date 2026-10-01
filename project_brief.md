@@ -135,7 +135,7 @@ UI, real payment processing, notifications, multi-region, seat maps/pricing tier
 - [ ] Initialise Spring Boot project via Maven (`groupId: com.bookmyseat`, `artifactId: book-my-seat`), Java 21.
 - [ ] Commit the Maven Wrapper (`mvnw`, `.mvn/`).
 - [ ] Layered package structure: `config`, `security`, `show`, `reservation`, `idempotency`, `observability`, `web` (error handling), `common`.
-- [ ] Externalised configuration through environment variables (`DATABASE_URL`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET`, `ADMIN_TOKEN`, `PORT`, `HIKARI_MAX_POOL_SIZE`, etc.) with safe local defaults in `application.yml`.
+- [ ] Externalised configuration through environment variables (`DATABASE_URL`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET`, `ADMIN_TOKEN`, `PORT`, `HIKARI_MAX_POOL_SIZE`, etc.) with safe local defaults in `application.properties`.
 - [ ] `.gitignore`, `.dockerignore`, `.editorconfig`.
 - [ ] `Makefile` with targets: `build`, `test`, `run`, `up`, `down`, `burst`.
 
@@ -613,7 +613,7 @@ book-my-seat/
     │   │   ├── observability/     # request-id filter, metrics binders, health indicators
     │   │   └── web/               # @RestControllerAdvice, error DTOs, exceptions
     │   └── resources/
-    │       ├── application.yml
+    │       ├── application.properties
     │       ├── logback-spring.xml
     │       └── db/migration/V1__init.sql
     └── test/java/com/bookmyseat/    # integration + concurrency tests (Testcontainers)
