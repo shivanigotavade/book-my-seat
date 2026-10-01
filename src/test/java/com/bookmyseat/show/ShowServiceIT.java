@@ -15,9 +15,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.bookmyseat.observability.HealthService;
 import com.bookmyseat.reservation.ReservationService;
-import com.bookmyseat.security.AuthPrincipal;
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.security.AuthPrincipal;import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
@@ -37,6 +37,9 @@ class ShowServiceIT {
 
 	@Autowired
 	ReservationService reserves;
+
+	@Autowired
+	HealthService health;
 
 	@Autowired
 	JdbcTemplate jdbc;
@@ -121,5 +124,10 @@ class ShowServiceIT {
 		assertThatThrownBy(() -> shows.getShow(java.util.UUID.randomUUID(), false))
 				.isInstanceOfSatisfying(ApiException.class,
 						e -> assertThat(e.getCode()).isEqualTo("NOT_FOUND"));
+	}
+
+	@Test
+	void readinessSeesLiveDatabase() {
+		assertThat(health.isDbUp()).isTrue();
 	}
 }
