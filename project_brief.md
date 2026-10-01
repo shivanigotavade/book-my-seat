@@ -606,10 +606,12 @@ book-my-seat/
     │   ├── java/com/bookmyseat/
     │   │   ├── BookMySeatApplication.java
     │   │   ├── config/            # datasource, security, jackson, metrics
+    │   │   ├── entity/            # JPA entities (all tables)
+    │   │   ├── repository/        # Spring Data repositories (native SQL on hot paths)
     │   │   ├── security/          # JWT filter, token service, dev token controller
-    │   │   ├── show/              # controller, service, repository, DTOs
-    │   │   ├── reservation/       # controller, service (atomic core), repository
-    │   │   ├── idempotency/       # key repository, hashing
+    │   │   ├── show/              # controller, service, DTOs
+    │   │   ├── reservation/       # controller, service (atomic core), DTOs
+    │   │   ├── idempotency/       # request hashing
     │   │   ├── observability/     # request-id filter, metrics binders, health indicators
     │   │   └── web/               # @RestControllerAdvice, error DTOs, exceptions
     │   └── resources/

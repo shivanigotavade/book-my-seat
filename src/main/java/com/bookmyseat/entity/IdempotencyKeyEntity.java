@@ -1,4 +1,4 @@
-package com.bookmyseat.idempotency;
+package com.bookmyseat.entity;
 
 import java.io.Serializable;
 import java.time.Instant;

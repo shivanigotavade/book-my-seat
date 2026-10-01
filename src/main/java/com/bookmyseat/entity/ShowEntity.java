@@ -1,4 +1,4 @@
-package com.bookmyseat.show;
+package com.bookmyseat.entity;
 
 import java.time.Instant;
 import java.util.UUID;

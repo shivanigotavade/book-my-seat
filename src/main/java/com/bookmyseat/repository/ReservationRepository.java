@@ -1,10 +1,12 @@
-package com.bookmyseat.reservation;
+package com.bookmyseat.repository;
 
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+
+import com.bookmyseat.entity.ReservationEntity;
 
 public interface ReservationRepository extends JpaRepository<ReservationEntity, UUID> {
 

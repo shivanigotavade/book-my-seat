@@ -1,4 +1,4 @@
-package com.bookmyseat.show;
+package com.bookmyseat.repository;
 
 import java.util.List;
 import java.util.UUID;
@@ -6,6 +6,8 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+
+import com.bookmyseat.entity.SeatEntity;
 
 public interface SeatRepository extends JpaRepository<SeatEntity, Long> {
 

@@ -12,6 +12,9 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.bookmyseat.entity.ShowEntity;
+import com.bookmyseat.repository.SeatRepository;
+import com.bookmyseat.repository.ShowRepository;
 import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 

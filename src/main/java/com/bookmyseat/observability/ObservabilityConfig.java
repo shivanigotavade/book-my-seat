@@ -3,7 +3,7 @@ package com.bookmyseat.observability;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import com.bookmyseat.show.SeatRepository;
+import com.bookmyseat.repository.SeatRepository;
 
 import io.micrometer.core.instrument.MeterRegistry;
 

@@ -15,14 +15,19 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.bookmyseat.common.TransactionRetry;
-import com.bookmyseat.idempotency.IdempotencyKeyRepository;
+import com.bookmyseat.entity.ReservationEntity;
+import com.bookmyseat.entity.ReservationSeatEntity;
+import com.bookmyseat.entity.SeatEntity;
+import com.bookmyseat.entity.ShowEntity;
 import com.bookmyseat.idempotency.RequestHasher;
 import com.bookmyseat.observability.ReservationMetrics;
+import com.bookmyseat.repository.IdempotencyKeyRepository;
+import com.bookmyseat.repository.ReservationRepository;
+import com.bookmyseat.repository.ReservationSeatRepository;
+import com.bookmyseat.repository.SeatRepository;
+import com.bookmyseat.repository.ShowRepository;
+import com.bookmyseat.repository.UserShowQuotaRepository;
 import com.bookmyseat.security.AuthPrincipal;
-import com.bookmyseat.show.SeatEntity;
-import com.bookmyseat.show.SeatRepository;
-import com.bookmyseat.show.ShowEntity;
-import com.bookmyseat.show.ShowRepository;
 import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 

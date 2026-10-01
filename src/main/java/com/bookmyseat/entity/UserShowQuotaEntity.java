@@ -1,4 +1,4 @@
-package com.bookmyseat.reservation;
+package com.bookmyseat.entity;
 
 import java.io.Serializable;
 import java.util.Objects;
