@@ -1,0 +1,38 @@
+# G17: Render blueprint. `render.yaml` + Dockerfile is the whole deploy:
+# push to main, Render builds the image, attaches Postgres, runs Flyway on
+# boot (with connect retries for cold starts) and gates traffic on
+# /health/ready. PORT is injected by the platform — never set it here.
+services:
+  - type: web
+    name: book-my-seat
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health/ready
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: book-my-seat-db
+          property: connectionString
+      - key: DB_USER
+        fromDatabase:
+          name: book-my-seat-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: book-my-seat-db
+          property: password
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: AUTH_DEV_TOKEN_ENDPOINT_ENABLED
+        value: true
+      - key: HIKARI_MAX_POOL_SIZE
+        value: 10
+      - key: LOG_LEVEL
+        value: INFO
+
+databases:
+  - name: book-my-seat-db
+    databaseName: bookmyseat
+    user: bookmyseat
