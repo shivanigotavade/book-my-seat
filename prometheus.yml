@@ -1,0 +1,8 @@
+# G16: optional observability profile (`docker compose --profile observability up`).
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: bookmyseat
+    static_configs:
+      - targets: ["app:8080"]
+    metrics_path: /metrics
