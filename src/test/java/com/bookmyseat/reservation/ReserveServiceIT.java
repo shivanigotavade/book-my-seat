@@ -312,4 +312,87 @@ class ReserveServiceIT {
 		assertThat(retry.replayed()).isFalse();
 		assertThat(retry.response().seats()).containsExactly("A13");
 	}
+
+	@Test
+	void partialAvailabilityDeclinesWholeRequest() {
+		UUID showId = createShow(List.of("A12", "A13", "A14"), "100", null);
+		reserves.reserve(showId, List.of("A13"), key("k-1"), null, ALICE);
+
+		assertThatThrownBy(
+				() -> reserves.reserve(showId, List.of("A12", "A13"), key("k-2"), null,
+						new AuthPrincipal("bob", "USER")))
+				.isInstanceOfSatisfying(ApiException.class, e -> {
+					assertThat(e.getCode()).isEqualTo("SEAT_TAKEN");
+				});
+		// Nothing held: the free seat stayed available and no quota was consumed.
+		assertThat(jdbc.queryForObject(
+				"SELECT status FROM seats WHERE show_id = ? AND seat_label = 'A12'", String.class,
+				showId)).isEqualTo("available");
+		assertThat(jdbc.queryForObject(
+				"SELECT COUNT(*) FROM user_show_quota WHERE user_id = 'bob' AND show_id = ?", Integer.class,
+				showId)).isEqualTo(0);
+		assertThat(jdbc.queryForObject(
+				"SELECT active_seats FROM user_show_quota WHERE user_id = 'alice' AND show_id = ?",
+				Integer.class, showId)).isEqualTo(1);
+	}
+
+	@Test
+	void overlappingMultiSeatRequestsNeverDeadlockNorPartiallyGrant() throws Exception {
+		List<String> seats = new ArrayList<>();
+		for (int i = 0; i < 8; i++) {
+			seats.add("B" + i);
+		}
+		UUID showId = createShow(seats, "100", "1000");
+		int requests = 1000;
+		var start = new CountDownLatch(1);
+		var done = new CountDownLatch(requests);
+		var wins = new AtomicInteger();
+		var codes = new ConcurrentHashMap<String, AtomicInteger>();
+
+		try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+			for (int i = 0; i < requests; i++) {
+				final int n = i;
+				pool.submit(() -> {
+					try {
+						start.await();
+						int pair = n % 4;
+						// Odd tasks list the pair reversed; normalisation must
+						// still lock both orders identically.
+						List<String> want = n % 2 == 0 ? List.of("B" + (2 * pair), "B" + (2 * pair + 1))
+								: List.of("B" + (2 * pair + 1), "B" + (2 * pair));
+						reserves.reserve(showId, want, key("m-" + n), null,
+								new AuthPrincipal("u-" + (n % 50), "USER"));
+						wins.incrementAndGet();
+					}
+					catch (ApiException e) {
+						codes.computeIfAbsent(e.getCode(), c -> new AtomicInteger()).incrementAndGet();
+					}
+					catch (Exception e) {
+						codes.computeIfAbsent("UNEXPECTED:" + e, c -> new AtomicInteger()).incrementAndGet();
+					}
+					finally {
+						done.countDown();
+					}
+					return null;
+				});
+			}
+			start.countDown();
+			assertThat(done.await(180, TimeUnit.SECONDS)).isTrue();
+		}
+
+		// Only clean domain declines; no deadlock/5xx-shaped surprise.
+		assertThat(codes.keySet()).containsExactly("SEAT_TAKEN");
+		// Exactly one winner per pair: 4 pairs, 2 seats each.
+		assertThat(wins.get()).isEqualTo(4);
+		assertThat(jdbc.queryForObject(
+				"SELECT COUNT(*) FROM seats WHERE show_id = ? AND status = 'confirmed'", Integer.class,
+				showId)).isEqualTo(8);
+		// No partial grants: both seats of a pair share one reservation.
+		assertThat(jdbc.queryForObject(
+				"SELECT COUNT(DISTINCT reservation_id) FROM seats WHERE show_id = ?", Integer.class,
+				showId)).isEqualTo(4);
+		assertThat(jdbc.queryForObject(
+				"SELECT COUNT(*) FROM reservation_seats WHERE show_id = ? AND active", Integer.class,
+				showId)).isEqualTo(8);
+	}
 }

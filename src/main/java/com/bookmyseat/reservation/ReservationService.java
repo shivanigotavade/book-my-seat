@@ -10,7 +10,11 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import com.bookmyseat.common.TransactionRetry;
 
 import com.bookmyseat.idempotency.RequestHasher;
 import com.bookmyseat.security.AuthPrincipal;
@@ -38,18 +42,35 @@ import com.fasterxml.jackson.databind.JsonNode;
  * seats sorted by label → reservation row. The decision is taken while
  * holding a row lock on every requested seat, so 500 racers on one seat
  * produce exactly one {@code 201}. Declines roll back cleanly as 4xx.
+ *
+ * <p>Multi-seat policy (G8) is all-or-nothing: any unavailable seat declines
+ * the whole request, nothing is held and quota is untouched. Because every
+ * request normalises to sorted order, overlapping pairs like
+ * {@code [A1,A2]} and {@code [A2,A1]} lock identically and cannot deadlock;
+ * residual transient contention (deadlock/serialization/lock-timeout) is
+ * retried outside the transaction boundary, up to 3 attempts, then
+ * {@code 429} — never a 5xx.
  */
 @Service
 public class ReservationService {
 
 	private final JdbcTemplate jdbc;
+	private final TransactionTemplate tx;
+	private final TransactionRetry retry;
 
-	public ReservationService(JdbcTemplate jdbc) {
+	public ReservationService(JdbcTemplate jdbc, PlatformTransactionManager txManager) {
 		this.jdbc = jdbc;
+		this.tx = new TransactionTemplate(txManager);
+		this.tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+		this.retry = new TransactionRetry();
 	}
 
-	@Transactional
 	public ReserveOutcome reserve(UUID showId, List<String> seats, JsonNode bodyKey, String headerKey,
+			AuthPrincipal caller) {
+		return retry.run(() -> tx.execute(status -> reserveTx(showId, seats, bodyKey, headerKey, caller)));
+	}
+
+	private ReserveOutcome reserveTx(UUID showId, List<String> seats, JsonNode bodyKey, String headerKey,
 			AuthPrincipal caller) {
 		String idempotencyKey = ReserveRequestValidator.resolveKey(bodyKey, headerKey);
 		List<String> labels = ReserveRequestValidator.normalizeSeats(seats);
