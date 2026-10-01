@@ -13,7 +13,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.bookmyseat.controller.HealthController;
-import com.bookmyseat.security.JwtService;
+import com.bookmyseat.service.HealthService;
+import com.bookmyseat.service.JwtService;
 
 /** No auth header anywhere: both probes are public (G13). */
 @WebMvcTest(HealthController.class)

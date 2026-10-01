@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.bookmyseat.show.CreateShowRequest;
 import com.bookmyseat.show.ShowDetailResponse;
 import com.bookmyseat.show.ShowResponse;
-import com.bookmyseat.show.ShowService;
+import com.bookmyseat.service.ShowService;
 
 /**
  * {@code POST /shows} — ADMIN only (enforced by the security filter chain).

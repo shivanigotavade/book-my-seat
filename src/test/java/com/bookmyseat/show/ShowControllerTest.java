@@ -22,7 +22,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.bookmyseat.controller.ShowController;
 import com.bookmyseat.security.AuthPrincipal;
-import com.bookmyseat.security.JwtService;
+import com.bookmyseat.service.JwtService;
+import com.bookmyseat.service.ShowService;
 import com.bookmyseat.web.ApiException;
 
 /**

@@ -1,4 +1,4 @@
-package com.bookmyseat.observability;
+package com.bookmyseat.service;
 
 import org.springframework.stereotype.Service;
 

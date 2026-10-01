@@ -13,6 +13,8 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import com.bookmyseat.service.JwtService;
+
 class JwtAuthenticationFilterTest {
 
 	private static final String SECRET = "test-secret-with-at-least-32-bytes!!";

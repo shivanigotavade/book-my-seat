@@ -15,9 +15,11 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import com.bookmyseat.observability.HealthService;
-import com.bookmyseat.reservation.ReservationService;
-import com.bookmyseat.security.AuthPrincipal;import com.bookmyseat.web.ApiException;
+import com.bookmyseat.security.AuthPrincipal;
+import com.bookmyseat.service.HealthService;
+import com.bookmyseat.service.ReservationService;
+import com.bookmyseat.service.ShowService;
+import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**

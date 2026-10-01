@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.bookmyseat.observability.RequestIdFilter;
-import com.bookmyseat.security.JwtService;
+import com.bookmyseat.service.JwtService;
 import com.bookmyseat.web.ApiError;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;

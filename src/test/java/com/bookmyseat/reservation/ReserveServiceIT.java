@@ -24,7 +24,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.show.CreateShowRequest;
-import com.bookmyseat.show.ShowService;
+import com.bookmyseat.service.ReservationService;
+import com.bookmyseat.service.ShowService;
 import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 

@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.bookmyseat.reservation.CancelResponse;
-import com.bookmyseat.reservation.ReservationService;
+import com.bookmyseat.service.ReservationService;
 import com.bookmyseat.reservation.ReserveOutcome;
 import com.bookmyseat.reservation.ReserveRequest;
 import com.bookmyseat.reservation.ReserveResponse;

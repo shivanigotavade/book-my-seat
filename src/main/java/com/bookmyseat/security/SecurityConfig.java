@@ -16,6 +16,7 @@ import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 import com.bookmyseat.observability.RequestIdFilter;
+import com.bookmyseat.service.JwtService;
 import com.bookmyseat.web.ApiError;
 import com.fasterxml.jackson.databind.ObjectMapper;
 

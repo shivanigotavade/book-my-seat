@@ -1,4 +1,4 @@
-package com.bookmyseat.security;
+package com.bookmyseat.service;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -8,6 +8,8 @@ import javax.crypto.SecretKey;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import com.bookmyseat.security.AuthPrincipal;
 
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
