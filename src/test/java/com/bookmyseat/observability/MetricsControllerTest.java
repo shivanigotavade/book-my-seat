@@ -13,6 +13,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.bookmyseat.controller.MetricsController;
 import com.bookmyseat.security.JwtService;
 
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;

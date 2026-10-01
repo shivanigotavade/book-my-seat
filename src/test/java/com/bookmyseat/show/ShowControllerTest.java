@@ -20,6 +20,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.bookmyseat.controller.ShowController;
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.security.JwtService;
 import com.bookmyseat.web.ApiException;

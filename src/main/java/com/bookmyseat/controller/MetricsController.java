@@ -1,9 +1,12 @@
-package com.bookmyseat.observability;
+package com.bookmyseat.controller;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.bookmyseat.observability.ReservationMetrics;
+import com.bookmyseat.observability.SeatGauges;
 
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 

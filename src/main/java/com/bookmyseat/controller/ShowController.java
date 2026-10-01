@@ -1,4 +1,4 @@
-package com.bookmyseat.show;
+package com.bookmyseat.controller;
 
 import java.util.UUID;
 
@@ -11,6 +11,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.bookmyseat.show.CreateShowRequest;
+import com.bookmyseat.show.ShowDetailResponse;
+import com.bookmyseat.show.ShowResponse;
+import com.bookmyseat.show.ShowService;
 
 /**
  * {@code POST /shows} — ADMIN only (enforced by the security filter chain).

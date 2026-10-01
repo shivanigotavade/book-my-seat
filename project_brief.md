@@ -606,6 +606,7 @@ book-my-seat/
     │   ├── java/com/bookmyseat/
     │   │   ├── BookMySeatApplication.java
     │   │   ├── config/            # datasource, security, jackson, metrics
+    │   │   ├── controller/        # all REST controllers
     │   │   ├── entity/            # JPA entities (all tables)
     │   │   ├── repository/        # Spring Data repositories (native SQL on hot paths)
     │   │   ├── security/          # JWT filter, token service, dev token controller

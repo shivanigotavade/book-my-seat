@@ -1,4 +1,4 @@
-package com.bookmyseat.security;
+package com.bookmyseat.controller;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.bookmyseat.observability.RequestIdFilter;
+import com.bookmyseat.security.JwtService;
 import com.bookmyseat.web.ApiError;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
