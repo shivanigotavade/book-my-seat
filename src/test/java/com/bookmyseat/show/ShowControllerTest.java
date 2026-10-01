@@ -2,6 +2,7 @@ package com.bookmyseat.show;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,6 +13,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
@@ -104,5 +106,41 @@ class ShowControllerTest {
 				.header("Authorization", "Bearer bad-token").content(showJson()))
 				.andExpect(status().isUnauthorized())
 				.andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"));
+	}
+
+	@Test
+	void getShowIsPublicAndFull() throws Exception {
+		UUID id = UUID.randomUUID();
+		when(shows.getShow(id, false)).thenReturn(new ShowDetailResponse(id, "Rock Night", 25000L, 4, 2,
+				new ShowDetailResponse.Counts(1, 0, 1),
+				List.of(new ShowResponse.SeatItem("A1", "available"), new ShowResponse.SeatItem("A2", "confirmed"))));
+		mvc.perform(get("/shows/{id}", id))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.id").value(id.toString()))
+				.andExpect(jsonPath("$.counts.available").value(1))
+				.andExpect(jsonPath("$.counts.held").value(0))
+				.andExpect(jsonPath("$.counts.confirmed").value(1))
+				.andExpect(jsonPath("$.seats.length()").value(2));
+	}
+
+	@Test
+	void getShowSummaryOmitsSeats() throws Exception {
+		UUID id = UUID.randomUUID();
+		when(shows.getShow(id, true)).thenReturn(new ShowDetailResponse(id, "Rock Night", 25000L, 4, 2,
+				new ShowDetailResponse.Counts(2, 0, 0), null));
+		mvc.perform(get("/shows/{id}", id).param("summary", "true"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.counts.available").value(2))
+				.andExpect(jsonPath("$.seats").doesNotExist());
+	}
+
+	@Test
+	void getUnknownShowIs404() throws Exception {
+		UUID id = UUID.randomUUID();
+		when(shows.getShow(id, false))
+				.thenThrow(new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown show."));
+		mvc.perform(get("/shows/{id}", id))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 }

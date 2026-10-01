@@ -15,6 +15,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.bookmyseat.reservation.ReservationService;
+import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -32,6 +34,9 @@ class ShowServiceIT {
 
 	@Autowired
 	ShowService shows;
+
+	@Autowired
+	ReservationService reserves;
 
 	@Autowired
 	JdbcTemplate jdbc;
@@ -88,5 +93,33 @@ class ShowServiceIT {
 		assertThat(elapsed.getSeconds()).isLessThan(15);
 		assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM seats WHERE show_id = ?", Integer.class,
 				response.id())).isEqualTo(5000);
+	}
+
+	@Test
+	void stateCountsShiftAndReconcile() throws Exception {
+		ShowResponse created = shows.createShow(request("State", List.of("A1", "A2", "A3"), "100", null));
+
+		ShowDetailResponse fresh = shows.getShow(created.id(), false);
+		assertThat(fresh.counts().available()).isEqualTo(3);
+		assertThat(fresh.counts().confirmed()).isEqualTo(0);
+		assertThat(fresh.seats()).extracting(ShowResponse.SeatItem::status).containsOnly("available");
+
+		reserves.reserve(created.id(), List.of("A1"),
+				com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.textNode("k-1"), null,
+				new AuthPrincipal("alice", "USER"));
+
+		ShowDetailResponse after = shows.getShow(created.id(), false);
+		assertThat(after.counts().available()).isEqualTo(2);
+		assertThat(after.counts().confirmed()).isEqualTo(1);
+		assertThat(after.counts().available() + after.counts().held() + after.counts().confirmed())
+				.isEqualTo(after.totalSeats());
+
+		ShowDetailResponse summary = shows.getShow(created.id(), true);
+		assertThat(summary.counts().available()).isEqualTo(2);
+		assertThat(summary.seats()).isNull();
+
+		assertThatThrownBy(() -> shows.getShow(java.util.UUID.randomUUID(), false))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("NOT_FOUND"));
 	}
 }
