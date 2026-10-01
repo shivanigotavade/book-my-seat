@@ -1,0 +1,38 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# Eclipse (local IDE only — not needed for clean clone builds)
+.project
+.classpath
+.settings/
+bin/
+
+# IntelliJ
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+*.env.local
+
+# Logs
+*.log
+logs/
+
+# Docker volumes
+postgres-data/
+
+# Java leftover from Eclipse import
+java/

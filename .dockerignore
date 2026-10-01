@@ -1,0 +1,10 @@
+target
+.git
+.gitignore
+README.md
+WRITEUP.md
+burst
+*.md
+docker-compose*.yml
+postgres-data
+.env
