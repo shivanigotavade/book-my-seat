@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.bookmyseat.idempotency.RequestHasher;
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,12 +22,16 @@ import com.fasterxml.jackson.databind.JsonNode;
  *
  * <ol>
  * <li>validate + normalise (trim, de-duplicate, <b>sort</b>);</li>
+ * <li>idempotency gate (G7): same-transaction key insert; replays return the
+ * stored reservation before touching quota or seats;</li>
  * <li>fast {@code per_user_limit} pre-check (the concurrent gate is G6);</li>
+ * <li>conditional quota increment (G6) — serialises same-user parallels;</li>
  * <li>lock every requested seat with {@code SELECT … ORDER BY seat_label
  * FOR UPDATE} — concurrent transactions queue behind the first;</li>
  * <li>re-check status while holding the locks, then a guarded
  * {@code UPDATE … WHERE status='available'} (belt and braces);</li>
- * <li>insert the reservation + {@code reservation_seats} safety-net rows.</li>
+ * <li>insert the reservation + {@code reservation_seats} safety-net rows and
+ * link the idempotency key.</li>
  * </ol>
  *
  * <p>Global lock order (G8): idempotency row (G7) → quota row (G6) →
@@ -44,11 +49,23 @@ public class ReservationService {
 	}
 
 	@Transactional
-	public ReserveResponse reserve(UUID showId, List<String> seats, JsonNode bodyKey, String headerKey,
+	public ReserveOutcome reserve(UUID showId, List<String> seats, JsonNode bodyKey, String headerKey,
 			AuthPrincipal caller) {
-		// Required from G5 on; persisted by the G7 gate (first statement there).
-		ReserveRequestValidator.resolveKey(bodyKey, headerKey);
+		String idempotencyKey = ReserveRequestValidator.resolveKey(bodyKey, headerKey);
 		List<String> labels = ReserveRequestValidator.normalizeSeats(seats);
+		String requestHash = RequestHasher.hash(showId, labels);
+
+		// Idempotency gate (G7): first statement. A concurrent same-key
+		// transaction blocks on this row until the first commits or aborts, so
+		// there is no window for a double reserve. A declined first attempt
+		// rolls back and frees the key.
+		int keyInserted = jdbc.update(
+				"INSERT INTO idempotency_keys (user_id, idempotency_key, request_hash) VALUES (?,?,?) "
+						+ "ON CONFLICT (user_id, idempotency_key) DO NOTHING",
+				caller.userId(), idempotencyKey, requestHash);
+		if (keyInserted == 0) {
+			return replay(caller.userId(), idempotencyKey, requestHash);
+		}
 
 		long pricePaise;
 		int perUserLimit;
@@ -66,10 +83,6 @@ public class ReservationService {
 			throw new ApiException(HttpStatus.CONFLICT, "PER_USER_LIMIT",
 					"Request exceeds per_user_limit of " + perUserLimit + ".");
 		}
-		// TODO(G7): idempotency gate goes first here — same-transaction key
-		// insert on (user_id, key); a concurrent same-key transaction blocks on
-		// that row until the first commits/aborts, and replays return the
-		// stored reservation before touching quota or seats.
 		// Quota gate (G6): the conditional UPDATE takes the quota row lock,
 		// serialising parallel requests from the same user. It sits before the
 		// seat locks per the global order (quota → seats) and rolls back with
@@ -144,9 +157,58 @@ public class ReservationService {
 					ps.setObject(2, showId);
 					ps.setString(3, label);
 				});
+		jdbc.update("UPDATE idempotency_keys SET reservation_id = ? WHERE user_id = ? AND idempotency_key = ?",
+				reservationId, caller.userId(), idempotencyKey);
 
-		return new ReserveResponse(reservationId, showId, caller.userId(), new ArrayList<>(labels), amount,
-				"confirmed");
+		return new ReserveOutcome(new ReserveResponse(reservationId, showId, caller.userId(),
+				new ArrayList<>(labels), amount, "confirmed"), false);
+	}
+
+	/**
+	 * Same key seen before: mismatched fingerprint → 409, otherwise the stored
+	 * reservation with no seat, quota or counter movement.
+	 */
+	private ReserveOutcome replay(String userId, String idempotencyKey, String requestHash) {
+		List<Map<String, Object>> rows = jdbc.queryForList(
+				"SELECT request_hash, reservation_id FROM idempotency_keys WHERE user_id = ? AND idempotency_key = ?",
+				userId, idempotencyKey);
+		if (rows.isEmpty()) {
+			// Defensive: the conflicting row vanished (first attempt aborted
+			// after we observed the conflict). Re-insert and proceed as first-timer.
+			jdbc.update(
+					"INSERT INTO idempotency_keys (user_id, idempotency_key, request_hash) VALUES (?,?,?) "
+							+ "ON CONFLICT (user_id, idempotency_key) DO NOTHING",
+					userId, idempotencyKey, requestHash);
+			throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "RETRY_LATER",
+					"Concurrent reservation in progress; retry with the same key.");
+		}
+		String storedHash = (String) rows.get(0).get("request_hash");
+		if (!requestHash.equals(storedHash)) {
+			throw new ApiException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED",
+					"Idempotency key was already used with a different request.");
+		}
+		UUID reservationId = (UUID) rows.get(0).get("reservation_id");
+		if (reservationId == null) {
+			throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "RETRY_LATER",
+					"Concurrent reservation in progress; retry with the same key.");
+		}
+		Map<String, Object> reservation;
+		try {
+			reservation = jdbc.queryForMap(
+					"SELECT show_id, user_id, amount_paise, status FROM reservations WHERE id = ?", reservationId);
+		}
+		catch (EmptyResultDataAccessException e) {
+			throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Original reservation is gone.");
+		}
+		List<String> seats = jdbc.queryForList(
+				"SELECT seat_label FROM reservation_seats WHERE reservation_id = ? ORDER BY seat_label",
+				String.class, reservationId);
+		// TODO(G14): increment the idempotent-replay counter only (never confirmed).
+		return new ReserveOutcome(
+				new ReserveResponse(reservationId, (UUID) reservation.get("show_id"),
+						(String) reservation.get("user_id"), seats,
+						((Number) reservation.get("amount_paise")).longValue(), (String) reservation.get("status")),
+				true);
 	}
 
 	private record SeatRow(String label, String status) {

@@ -59,7 +59,8 @@ class ReserveControllerTest {
 		when(jwtService.parse("user-token")).thenReturn(new AuthPrincipal("alice", "USER"));
 		when(reservations.reserve(eq(showId), eq(List.of("A12")), any(),
 				org.mockito.ArgumentMatchers.isNull(), eq(new AuthPrincipal("alice", "USER"))))
-				.thenReturn(new ReserveResponse(reservationId, showId, "alice", List.of("A12"), 25000L, "confirmed"));
+				.thenReturn(new ReserveOutcome(new ReserveResponse(reservationId, showId, "alice", List.of("A12"),
+						25000L, "confirmed"), false));
 		mvc.perform(post("/shows/{id}/reserve", showId).contentType(MediaType.APPLICATION_JSON)
 				.header("Authorization", "Bearer user-token").content(body()))
 				.andExpect(status().isCreated())
@@ -92,6 +93,23 @@ class ReserveControllerTest {
 				.header("Authorization", "Bearer user-token").header("Idempotency-Key", "other").content(body()))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+	}
+
+	@Test
+	void replayIs200WithHeaderAndSameBody() throws Exception {
+		UUID showId = UUID.randomUUID();
+		UUID reservationId = UUID.randomUUID();
+		when(jwtService.parse("user-token")).thenReturn(new AuthPrincipal("alice", "USER"));
+		when(reservations.reserve(any(), any(), any(), any(), any()))
+				.thenReturn(new ReserveOutcome(new ReserveResponse(reservationId, showId, "alice", List.of("A12"),
+						25000L, "confirmed"), true));
+		mvc.perform(post("/shows/{id}/reserve", showId).contentType(MediaType.APPLICATION_JSON)
+				.header("Authorization", "Bearer user-token").content(body()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.reservation_id").value(reservationId.toString()))
+				.andExpect(jsonPath("$.user_id").value("alice"))
+				.andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+						.header().string("Idempotent-Replayed", "true"));
 	}
 
 	@Test

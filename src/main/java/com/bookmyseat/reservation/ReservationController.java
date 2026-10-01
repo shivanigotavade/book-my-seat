@@ -31,8 +31,12 @@ public class ReservationController {
 			@RequestBody(required = false) ReserveRequest body,
 			@RequestHeader(value = "Idempotency-Key", required = false) String headerKey,
 			@AuthenticationPrincipal AuthPrincipal principal) {
-		ReserveResponse response = reservations.reserve(showId, body == null ? null : body.seats(),
+		ReserveOutcome outcome = reservations.reserve(showId, body == null ? null : body.seats(),
 				body == null ? null : body.idempotencyKey(), headerKey, principal);
-		return ResponseEntity.status(HttpStatus.CREATED).body(response);
+		var builder = ResponseEntity.status(outcome.replayed() ? HttpStatus.OK : HttpStatus.CREATED);
+		if (outcome.replayed()) {
+			builder.header("Idempotent-Replayed", "true");
+		}
+		return builder.body(outcome.response());
 	}
 }

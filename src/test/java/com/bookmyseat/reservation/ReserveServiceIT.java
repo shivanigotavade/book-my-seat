@@ -124,9 +124,10 @@ class ReserveServiceIT {
 	@Test
 	void sequentialSecondBookingDeclined() {
 		UUID showId = createShow(List.of("A12", "A13"), "25000", null);
-		ReserveResponse first = reserves.reserve(showId, List.of("A13"), key("k-1"), null, ALICE);
-		assertThat(first.status()).isEqualTo("confirmed");
-		assertThat(first.amountPaise()).isEqualTo(25000L);
+		ReserveOutcome first = reserves.reserve(showId, List.of("A13"), key("k-1"), null, ALICE);
+		assertThat(first.replayed()).isFalse();
+		assertThat(first.response().status()).isEqualTo("confirmed");
+		assertThat(first.response().amountPaise()).isEqualTo(25000L);
 
 		assertThatThrownBy(
 				() -> reserves.reserve(showId, List.of("A13"), key("k-2"), null,
@@ -227,7 +228,9 @@ class ReserveServiceIT {
 	@Test
 	void ownerComesFromTokenAndAmountMultiplies() {
 		UUID showId = createShow(List.of("A1", "A2"), "25000", null);
-		ReserveResponse response = reserves.reserve(showId, List.of("A2", "A1"), key("k-1"), null, ALICE);
+		ReserveOutcome outcome = reserves.reserve(showId, List.of("A2", "A1"), key("k-1"), null, ALICE);
+		assertThat(outcome.replayed()).isFalse();
+		ReserveResponse response = outcome.response();
 		assertThat(response.userId()).isEqualTo("alice");
 		assertThat(response.seats()).containsExactly("A1", "A2");
 		assertThat(response.amountPaise()).isEqualTo(50000L);
@@ -235,5 +238,78 @@ class ReserveServiceIT {
 		Map<String, Object> row = jdbc.queryForMap("SELECT user_id FROM seats WHERE show_id = ? AND seat_label = 'A1'",
 				showId);
 		assertThat(row.get("user_id")).isEqualTo("alice");
+	}
+
+	@Test
+	void sameKeyRaceYieldsOneReservationAndReplays() throws Exception {
+		UUID showId = createShow(List.of("A12", "A13"), "25000", null);
+		int racers = 50;
+		var start = new CountDownLatch(1);
+		var done = new CountDownLatch(racers);
+		var firsts = new ConcurrentHashMap<UUID, Boolean>();
+		var replays = new ConcurrentHashMap<UUID, Boolean>();
+		var codes = new ConcurrentHashMap<String, AtomicInteger>();
+
+		try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+			for (int i = 0; i < racers; i++) {
+				pool.submit(() -> {
+					try {
+						start.await();
+						ReserveOutcome outcome = reserves.reserve(showId, List.of("A12"), key("same"), null,
+								ALICE);
+						(outcome.replayed() ? replays : firsts).put(outcome.response().reservationId(), true);
+					}
+					catch (ApiException e) {
+						codes.computeIfAbsent(e.getCode(), c -> new AtomicInteger()).incrementAndGet();
+					}
+					catch (Exception e) {
+						codes.computeIfAbsent("UNEXPECTED:" + e, c -> new AtomicInteger()).incrementAndGet();
+					}
+					finally {
+						done.countDown();
+					}
+					return null;
+				});
+			}
+			start.countDown();
+			assertThat(done.await(120, TimeUnit.SECONDS)).isTrue();
+		}
+
+		assertThat(codes).isEmpty();
+		assertThat(firsts.keySet()).hasSize(1);
+		UUID only = firsts.keySet().iterator().next();
+		assertThat(replays.keySet()).containsExactly(only);
+		assertThat(firsts.size() + replays.size()).isEqualTo(2);
+		assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reservations WHERE show_id = ?", Integer.class,
+				showId)).isEqualTo(1);
+		assertThat(jdbc.queryForObject(
+				"SELECT active_seats FROM user_show_quota WHERE user_id = 'alice' AND show_id = ?",
+				Integer.class, showId)).isEqualTo(1);
+	}
+
+	@Test
+	void sameKeyDifferentBodyIs409() {
+		UUID showId = createShow(List.of("A12", "A13"), "25000", null);
+		reserves.reserve(showId, List.of("A12"), key("k"), null, ALICE);
+		assertThatThrownBy(() -> reserves.reserve(showId, List.of("A13"), key("k"), null, ALICE))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("IDEMPOTENCY_KEY_REUSED"));
+	}
+
+	@Test
+	void declinedAttemptDoesNotConsumeKey() {
+		UUID showId = createShow(List.of("A12", "A13"), "25000", null);
+		reserves.reserve(showId, List.of("A12"), key("alice-k"), null, ALICE);
+		// Bob's attempt on the taken seat declines and frees his key.
+		assertThatThrownBy(
+				() -> reserves.reserve(showId, List.of("A12"), key("bob-k"), null,
+						new AuthPrincipal("bob", "USER")))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("SEAT_TAKEN"));
+		// Same key works for a free seat.
+		ReserveOutcome retry = reserves.reserve(showId, List.of("A13"), key("bob-k"), null,
+				new AuthPrincipal("bob", "USER"));
+		assertThat(retry.replayed()).isFalse();
+		assertThat(retry.response().seats()).containsExactly("A13");
 	}
 }
