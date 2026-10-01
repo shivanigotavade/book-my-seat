@@ -34,5 +34,5 @@ logs/
 # Docker volumes
 postgres-data/
 
-# Java leftover from Eclipse import
-java/
+# Java leftover from Eclipse import (top-level only — do not ignore src/**/java/)
+/java/
