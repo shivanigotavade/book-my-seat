@@ -50,6 +50,10 @@ import com.fasterxml.jackson.databind.JsonNode;
  * residual transient contention (deadlock/serialization/lock-timeout) is
  * retried outside the transaction boundary, up to 3 attempts, then
  * {@code 429} — never a 5xx.
+ *
+ * <p>Cancel (G9) follows the same order — quota → seats sorted →
+ * reservation — and frees seats only while tied to the cancelled
+ * reservation, so re-booked seats are never resurrected.
  */
 @Service
 public class ReservationService {
@@ -230,6 +234,109 @@ public class ReservationService {
 						(String) reservation.get("user_id"), seats,
 						((Number) reservation.get("amount_paise")).longValue(), (String) reservation.get("status")),
 				true);
+	}
+
+	/**
+	 * Owner-only cancel (G9). Follows the global lock order — quota →
+	 * seats (sorted) → reservation — and releases seats only while they are
+	 * still tied to <b>this</b> reservation, so a late duplicate cancel can
+	 * never free a seat that was re-booked by someone else. Repeat cancel is
+	 * {@code 200} with no double decrement.
+	 */
+	public CancelResponse cancel(UUID reservationId, AuthPrincipal caller) {
+		for (int i = 0; i < 3; i++) {
+			try {
+				return retry.run(() -> tx.execute(status -> cancelTx(reservationId, caller)));
+			}
+			catch (CancelConflictException e) {
+				// Lost a concurrent-cancel race after touching quota; the whole
+				// attempt rolled back, so re-reading is safe (next pass sees
+				// cancelled → idempotent 200).
+			}
+		}
+		return readCancelState(reservationId, caller);
+	}
+
+	private CancelResponse cancelTx(UUID reservationId, AuthPrincipal caller) {
+		Map<String, Object> reservation;
+		try {
+			reservation = jdbc.queryForMap(
+					"SELECT show_id, user_id, status FROM reservations WHERE id = ?", reservationId);
+		}
+		catch (EmptyResultDataAccessException e) {
+			throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown reservation.");
+		}
+		UUID showId = (UUID) reservation.get("show_id");
+		String owner = (String) reservation.get("user_id");
+		if (!caller.userId().equals(owner)) {
+			throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Only the owner can cancel.");
+		}
+		if ("cancelled".equals(reservation.get("status"))) {
+			return cancelState(reservationId, showId, owner);
+		}
+
+		List<String> labels = jdbc.queryForList(
+				"SELECT seat_label FROM seats WHERE reservation_id = ? ORDER BY seat_label", String.class,
+				reservationId);
+
+		jdbc.update("UPDATE user_show_quota SET active_seats = active_seats - ? WHERE user_id = ? AND show_id = ?",
+				labels.size(), owner, showId);
+
+		List<String> locked = jdbc.query(con -> {
+			PreparedStatement ps = con.prepareStatement(
+					"SELECT seat_label FROM seats WHERE reservation_id = ? ORDER BY seat_label FOR UPDATE");
+			ps.setObject(1, reservationId);
+			return ps;
+		}, (rs, i) -> rs.getString(1));
+
+		int transitioned = jdbc.update(
+				"UPDATE reservations SET status='cancelled', cancelled_at=now() "
+						+ "WHERE id=? AND user_id=? AND status='confirmed'",
+				reservationId, owner);
+		if (transitioned == 0) {
+			// A concurrent cancel committed first; quota/seat moves above roll
+			// back with this attempt — retry to return the idempotent 200.
+			throw new CancelConflictException();
+		}
+
+		// Guarded by reservation_id: seats re-booked to a new owner since are untouched.
+		jdbc.update(con -> {
+			PreparedStatement ps = con.prepareStatement(
+					"UPDATE seats SET status='available', reservation_id=NULL, user_id=NULL, updated_at=now() "
+							+ "WHERE reservation_id=? AND status IN ('held','confirmed')");
+			ps.setObject(1, reservationId);
+			return ps;
+		});
+		jdbc.update("UPDATE reservation_seats SET active=FALSE WHERE reservation_id=? AND active", reservationId);
+		// TODO(G14): increment reservations_cancelled_total and seats_released_total.
+
+		return new CancelResponse(reservationId, showId, owner, locked, "cancelled");
+	}
+
+	private CancelResponse readCancelState(UUID reservationId, AuthPrincipal caller) {
+		Map<String, Object> reservation;
+		try {
+			reservation = jdbc.queryForMap(
+					"SELECT show_id, user_id, status FROM reservations WHERE id = ?", reservationId);
+		}
+		catch (EmptyResultDataAccessException e) {
+			throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown reservation.");
+		}
+		if (!caller.userId().equals(reservation.get("user_id"))) {
+			throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Only the owner can cancel.");
+		}
+		return cancelState(reservationId, (UUID) reservation.get("show_id"), (String) reservation.get("user_id"));
+	}
+
+	private CancelResponse cancelState(UUID reservationId, UUID showId, String owner) {
+		List<String> seats = jdbc.queryForList(
+				"SELECT seat_label FROM reservation_seats WHERE reservation_id = ? ORDER BY seat_label",
+				String.class, reservationId);
+		return new CancelResponse(reservationId, showId, owner, seats, "cancelled");
+	}
+
+	/** Internal: lost a concurrent-cancel race; the attempt rolled back — re-read instead. */
+	private static final class CancelConflictException extends RuntimeException {
 	}
 
 	private record SeatRow(String label, String status) {

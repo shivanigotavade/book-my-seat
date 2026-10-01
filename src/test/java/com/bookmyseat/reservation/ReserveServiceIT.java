@@ -395,4 +395,109 @@ class ReserveServiceIT {
 				"SELECT COUNT(*) FROM reservation_seats WHERE show_id = ? AND active", Integer.class,
 				showId)).isEqualTo(8);
 	}
+
+	@Test
+	void cancelThenRebookByAnotherUser() {
+		UUID showId = createShow(List.of("A12", "A13"), "25000", null);
+		ReserveOutcome first = reserves.reserve(showId, List.of("A12"), key("k-1"), null, ALICE);
+
+		CancelResponse cancelled = reserves.cancel(first.response().reservationId(), ALICE);
+		assertThat(cancelled.status()).isEqualTo("cancelled");
+		assertThat(cancelled.seats()).containsExactly("A12");
+		assertThat(jdbc.queryForObject(
+				"SELECT status FROM seats WHERE show_id = ? AND seat_label = 'A12'", String.class,
+				showId)).isEqualTo("available");
+		assertThat(jdbc.queryForObject(
+				"SELECT active_seats FROM user_show_quota WHERE user_id = 'alice' AND show_id = ?",
+				Integer.class, showId)).isEqualTo(0);
+
+		AuthPrincipal bob = new AuthPrincipal("bob", "USER");
+		ReserveOutcome rebook = reserves.reserve(showId, List.of("A12"), key("k-1"), null, bob);
+		assertThat(rebook.replayed()).isFalse();
+		assertThat(rebook.response().userId()).isEqualTo("bob");
+	}
+
+	@Test
+	void lateDuplicateCancelNeverFreesNewOwnerSeat() {
+		UUID showId = createShow(List.of("A12"), "25000", null);
+		ReserveOutcome first = reserves.reserve(showId, List.of("A12"), key("k-1"), null, ALICE);
+		reserves.cancel(first.response().reservationId(), ALICE);
+
+		AuthPrincipal bob = new AuthPrincipal("bob", "USER");
+		reserves.reserve(showId, List.of("A12"), key("k-2"), null, bob);
+
+		// Alice's stale cancel is idempotent and touches nothing of Bob's.
+		CancelResponse repeat = reserves.cancel(first.response().reservationId(), ALICE);
+		assertThat(repeat.status()).isEqualTo("cancelled");
+		assertThat(jdbc.queryForObject(
+				"SELECT user_id FROM seats WHERE show_id = ? AND seat_label = 'A12'", String.class,
+				showId)).isEqualTo("bob");
+		assertThat(jdbc.queryForObject(
+				"SELECT status FROM seats WHERE show_id = ? AND seat_label = 'A12'", String.class,
+				showId)).isEqualTo("confirmed");
+		assertThat(jdbc.queryForObject(
+				"SELECT active_seats FROM user_show_quota WHERE user_id = 'bob' AND show_id = ?",
+				Integer.class, showId)).isEqualTo(1);
+	}
+
+	@Test
+	void nonOwnerCancelIs403() {
+		UUID showId = createShow(List.of("A12"), "25000", null);
+		ReserveOutcome first = reserves.reserve(showId, List.of("A12"), key("k-1"), null, ALICE);
+		assertThatThrownBy(() -> reserves.cancel(first.response().reservationId(),
+				new AuthPrincipal("bob", "USER"))).isInstanceOfSatisfying(ApiException.class, e -> {
+					assertThat(e.getCode()).isEqualTo("FORBIDDEN");
+					assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN);
+				});
+		assertThatThrownBy(() -> reserves.cancel(UUID.randomUUID(), ALICE))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("NOT_FOUND"));
+	}
+
+	@Test
+	void concurrentDoubleCancelIsIdempotent() throws Exception {
+		UUID showId = createShow(List.of("A12"), "25000", null);
+		ReserveOutcome first = reserves.reserve(showId, List.of("A12"), key("k-1"), null, ALICE);
+		UUID reservationId = first.response().reservationId();
+
+		int racers = 10;
+		var start = new CountDownLatch(1);
+		var done = new CountDownLatch(racers);
+		var oks = new AtomicInteger();
+		var codes = new ConcurrentHashMap<String, AtomicInteger>();
+
+		try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+			for (int i = 0; i < racers; i++) {
+				pool.submit(() -> {
+					try {
+						start.await();
+						CancelResponse response = reserves.cancel(reservationId, ALICE);
+						assertThat(response.status()).isEqualTo("cancelled");
+						oks.incrementAndGet();
+					}
+					catch (ApiException e) {
+						codes.computeIfAbsent(e.getCode(), c -> new AtomicInteger()).incrementAndGet();
+					}
+					catch (Exception e) {
+						codes.computeIfAbsent("UNEXPECTED:" + e, c -> new AtomicInteger()).incrementAndGet();
+					}
+					finally {
+						done.countDown();
+					}
+					return null;
+				});
+			}
+			start.countDown();
+			assertThat(done.await(120, TimeUnit.SECONDS)).isTrue();
+		}
+
+		assertThat(codes).isEmpty();
+		assertThat(oks.get()).isEqualTo(racers);
+		assertThat(jdbc.queryForObject(
+				"SELECT status FROM seats WHERE show_id = ? AND seat_label = 'A12'", String.class,
+				showId)).isEqualTo("available");
+		assertThat(jdbc.queryForObject(
+				"SELECT active_seats FROM user_show_quota WHERE user_id = 'alice' AND show_id = ?",
+				Integer.class, showId)).isEqualTo(0);
+	}
 }

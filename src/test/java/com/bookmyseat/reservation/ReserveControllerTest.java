@@ -120,4 +120,49 @@ class ReserveControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
 	}
+
+	@Test
+	void cancelAnonymousIs401() throws Exception {
+		mvc.perform(post("/reservations/{id}/cancel", UUID.randomUUID()))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"));
+	}
+
+	@Test
+	void cancelHappyIs200() throws Exception {
+		UUID reservationId = UUID.randomUUID();
+		UUID showId = UUID.randomUUID();
+		when(jwtService.parse("user-token")).thenReturn(new AuthPrincipal("alice", "USER"));
+		when(reservations.cancel(eq(reservationId), eq(new AuthPrincipal("alice", "USER"))))
+				.thenReturn(new CancelResponse(reservationId, showId, "alice", List.of("A12"), "cancelled"));
+		mvc.perform(post("/reservations/{id}/cancel", reservationId)
+				.header("Authorization", "Bearer user-token"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.reservation_id").value(reservationId.toString()))
+				.andExpect(jsonPath("$.status").value("cancelled"));
+	}
+
+	@Test
+	void cancelByNonOwnerIs403() throws Exception {
+		UUID reservationId = UUID.randomUUID();
+		when(jwtService.parse("user-token")).thenReturn(new AuthPrincipal("bob", "USER"));
+		when(reservations.cancel(any(), any())).thenThrow(
+				new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Only the owner can cancel."));
+		mvc.perform(post("/reservations/{id}/cancel", reservationId)
+				.header("Authorization", "Bearer user-token"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+	}
+
+	@Test
+	void cancelUnknownIs404() throws Exception {
+		UUID reservationId = UUID.randomUUID();
+		when(jwtService.parse("user-token")).thenReturn(new AuthPrincipal("alice", "USER"));
+		when(reservations.cancel(any(), any())).thenThrow(
+				new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown reservation."));
+		mvc.perform(post("/reservations/{id}/cancel", reservationId)
+				.header("Authorization", "Bearer user-token"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
 }

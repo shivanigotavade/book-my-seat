@@ -39,4 +39,10 @@ public class ReservationController {
 		}
 		return builder.body(outcome.response());
 	}
+
+	@PostMapping("/reservations/{id}/cancel")
+	public ResponseEntity<CancelResponse> cancel(@PathVariable UUID id,
+			@AuthenticationPrincipal AuthPrincipal principal) {
+		return ResponseEntity.ok(reservations.cancel(id, principal));
+	}
 }
