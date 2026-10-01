@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -58,6 +61,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 @Service
 public class ReservationService {
 
+	private static final Logger log = LoggerFactory.getLogger(ReservationService.class);
+
 	private final JdbcTemplate jdbc;
 	private final TransactionTemplate tx;
 	private final TransactionRetry retry;
@@ -73,20 +78,30 @@ public class ReservationService {
 
 	public ReserveOutcome reserve(UUID showId, List<String> seats, JsonNode bodyKey, String headerKey,
 			AuthPrincipal caller) {
+		String keyPreview = previewKey(bodyKey, headerKey);
+		decisionMdc(showId, caller.userId(), keyPreview);
 		try {
 			ReserveOutcome outcome = retry
 					.run(() -> tx.execute(status -> reserveTx(showId, seats, bodyKey, headerKey, caller)));
 			if (outcome.replayed()) {
 				metrics.replayed();
+				log.info("reservation.replayed seats={}", outcome.response().seats().size());
 			}
 			else {
 				metrics.confirmed();
+				log.info("reservation.confirmed reservation_id={} seats={} amount_paise={}",
+						outcome.response().reservationId(), outcome.response().seats().size(),
+						outcome.response().amountPaise());
 			}
 			return outcome;
 		}
 		catch (ApiException e) {
 			metrics.declined(e.getCode());
+			log.info("reservation.declined reason={}", e.getCode());
 			throw e;
+		}
+		finally {
+			clearDecisionMdc();
 		}
 	}
 
@@ -260,24 +275,33 @@ public class ReservationService {
 	 * {@code 200} with no double decrement.
 	 */
 	public CancelResponse cancel(UUID reservationId, AuthPrincipal caller) {
-		for (int i = 0; i < 3; i++) {
-			try {
-				CancelResponse response = retry.run(() -> tx.execute(status -> cancelTx(reservationId, caller)));
-				metrics.cancelled();
-				metrics.released(response.seats().size());
-				return response;
+		decisionMdc(null, caller.userId(), null);
+		try {
+			for (int i = 0; i < 3; i++) {
+				try {
+					CancelResponse response = retry.run(() -> tx.execute(status -> cancelTx(reservationId, caller)));
+					metrics.cancelled();
+					metrics.released(response.seats().size());
+					log.info("reservation.cancelled reservation_id={} seats={}", reservationId,
+							response.seats().size());
+					return response;
+				}
+				catch (CancelConflictException e) {
+					// Lost a concurrent-cancel race after touching quota; the whole
+					// attempt rolled back, so re-reading is safe (next pass sees
+					// cancelled → idempotent 200).
+				}
+				catch (ApiException e) {
+					metrics.declined(e.getCode());
+					log.info("reservation.declined reason={}", e.getCode());
+					throw e;
+				}
 			}
-			catch (CancelConflictException e) {
-				// Lost a concurrent-cancel race after touching quota; the whole
-				// attempt rolled back, so re-reading is safe (next pass sees
-				// cancelled → idempotent 200).
-			}
-			catch (ApiException e) {
-				metrics.declined(e.getCode());
-				throw e;
-			}
+			return readCancelState(reservationId, caller);
 		}
-		return readCancelState(reservationId, caller);
+		finally {
+			clearDecisionMdc();
+		}
 	}
 
 	private CancelResponse cancelTx(UUID reservationId, AuthPrincipal caller) {
@@ -360,6 +384,38 @@ public class ReservationService {
 
 	/** Internal: lost a concurrent-cancel race; the attempt rolled back — re-read instead. */
 	private static final class CancelConflictException extends RuntimeException {
+	}
+
+	/**
+	 * Per-decision MDC (G15): {@code show_id} and a truncated key preview join
+	 * the {@code request_id}/{@code user_id} set upstream, so any line is
+	 * greppable from the error response. Removed afterwards — threads are reused.
+	 */
+	private static void decisionMdc(UUID showId, String userId, String keyPreview) {
+		if (showId != null) {
+			MDC.put("show_id", showId.toString());
+		}
+		if (userId != null) {
+			MDC.put("user_id", userId);
+		}
+		if (keyPreview != null) {
+			MDC.put("idempotency_key", keyPreview);
+		}
+	}
+
+	private static void clearDecisionMdc() {
+		MDC.remove("show_id");
+		MDC.remove("idempotency_key");
+		MDC.remove("outcome");
+	}
+
+	private static String previewKey(JsonNode bodyKey, String headerKey) {
+		String raw = headerKey != null && !headerKey.isBlank() ? headerKey.trim()
+				: bodyKey != null && bodyKey.isTextual() ? bodyKey.textValue().trim() : null;
+		if (raw == null || raw.isEmpty()) {
+			return null;
+		}
+		return raw.length() <= 12 ? raw : raw.substring(0, 12);
 	}
 
 	private record SeatRow(String label, String status) {

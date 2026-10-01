@@ -60,5 +60,5 @@ app:
 
 logging:
   level:
-    root: INFO
-    com.bookmyseat: INFO
+    root: ${LOG_LEVEL:INFO}
+    com.bookmyseat: ${LOG_LEVEL:INFO}

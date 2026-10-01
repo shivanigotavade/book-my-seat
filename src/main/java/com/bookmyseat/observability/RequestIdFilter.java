@@ -45,7 +45,9 @@ public class RequestIdFilter extends OncePerRequestFilter {
 			chain.doFilter(request, response);
 		}
 		finally {
-			MDC.remove(MDC_KEY);
+			// Clear everything: downstream filters add user_id and services
+			// add outcome keys on this thread — none may leak to the next task.
+			MDC.clear();
 		}
 	}
 

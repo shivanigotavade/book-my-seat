@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <!-- G15: single JSON line per event to stdout. Only the listed MDC keys
+       are included so nothing unexpected (tokens, secrets) can leak. -->
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <includeMdcKeyName>request_id</includeMdcKeyName>
+      <includeMdcKeyName>user_id</includeMdcKeyName>
+      <includeMdcKeyName>show_id</includeMdcKeyName>
+      <includeMdcKeyName>idempotency_key</includeMdcKeyName>
+      <includeMdcKeyName>outcome</includeMdcKeyName>
+    </encoder>
+  </appender>
+
+  <root level="${LOG_LEVEL:-INFO}">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>

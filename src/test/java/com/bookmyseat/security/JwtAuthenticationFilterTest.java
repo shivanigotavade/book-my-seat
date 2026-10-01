@@ -2,8 +2,12 @@ package com.bookmyseat.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -19,6 +23,7 @@ class JwtAuthenticationFilterTest {
 	@AfterEach
 	void clear() {
 		SecurityContextHolder.clearContext();
+		MDC.clear();
 	}
 
 	private void doFilter(String authorization) throws Exception {
@@ -59,5 +64,16 @@ class JwtAuthenticationFilterTest {
 		assertThat(auth).isNotNull();
 		assertThat(auth.getPrincipal()).isEqualTo(new AuthPrincipal("admin", "ADMIN"));
 		assertThat(auth.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_ADMIN");
+	}
+
+	@Test
+	void userIdIsInMdcDuringRequest() throws Exception {
+		var filter = new JwtAuthenticationFilter(jwtService, ADMIN_TOKEN);
+		var request = new MockHttpServletRequest();
+		request.addHeader("Authorization", "Bearer " + jwtService.createToken("alice", "USER"));
+		var seen = new AtomicReference<Map<String, String>>();
+		filter.doFilter(request, new MockHttpServletResponse(),
+				(req, res) -> seen.set(MDC.getCopyOfContextMap()));
+		assertThat(seen.get()).containsEntry("user_id", "alice");
 	}
 }

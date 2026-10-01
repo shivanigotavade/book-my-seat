@@ -11,6 +11,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import org.slf4j.MDC;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -56,9 +57,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 			var auth = new UsernamePasswordAuthenticationToken(principal, null,
 					List.of(new SimpleGrantedAuthority("ROLE_" + principal.role())));
 			SecurityContextHolder.getContext().setAuthentication(auth);
+			MDC.put("user_id", principal.userId());
 		}
 		catch (JwtException | IllegalArgumentException e) {
 			SecurityContextHolder.clearContext();
+			MDC.remove("user_id");
 		}
 		chain.doFilter(request, response);
 	}
