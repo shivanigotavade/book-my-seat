@@ -1,9 +1,9 @@
 package com.bookmyseat.observability;
 
-import javax.sql.DataSource;
-
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 /**
  * Readiness probe (G13): {@code SELECT 1} with a short timeout so a wedged
@@ -12,17 +12,14 @@ import org.springframework.stereotype.Service;
 @Service
 public class HealthService {
 
-	private final JdbcTemplate jdbc;
-
-	public HealthService(DataSource dataSource) {
-		this.jdbc = new JdbcTemplate(dataSource);
-		this.jdbc.setQueryTimeout(2);
-	}
+	@PersistenceContext
+	private EntityManager entities;
 
 	public boolean isDbUp() {
 		try {
-			Integer one = jdbc.queryForObject("SELECT 1", Integer.class);
-			return one != null && one == 1;
+			Object one = entities.createNativeQuery("SELECT 1")
+					.setHint("jakarta.persistence.query.timeout", 2000).getSingleResult();
+			return ((Number) one).intValue() == 1;
 		}
 		catch (Exception e) {
 			return false;

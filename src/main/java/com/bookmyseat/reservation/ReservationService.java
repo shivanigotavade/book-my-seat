@@ -1,6 +1,5 @@
 package com.bookmyseat.reservation;
 
-import java.sql.PreparedStatement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -9,18 +8,21 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.bookmyseat.common.TransactionRetry;
+import com.bookmyseat.idempotency.IdempotencyKeyRepository;
 import com.bookmyseat.idempotency.RequestHasher;
 import com.bookmyseat.observability.ReservationMetrics;
 import com.bookmyseat.security.AuthPrincipal;
+import com.bookmyseat.show.SeatEntity;
+import com.bookmyseat.show.SeatRepository;
+import com.bookmyseat.show.ShowEntity;
+import com.bookmyseat.show.ShowRepository;
 import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -63,13 +65,26 @@ public class ReservationService {
 
 	private static final Logger log = LoggerFactory.getLogger(ReservationService.class);
 
-	private final JdbcTemplate jdbc;
+	private final ShowRepository shows;
+	private final SeatRepository seatRepository;
+	private final ReservationRepository reservations;
+	private final ReservationSeatRepository seatRows;
+	private final UserShowQuotaRepository quotas;
+	private final IdempotencyKeyRepository keys;
 	private final TransactionTemplate tx;
 	private final TransactionRetry retry;
 	private final ReservationMetrics metrics;
 
-	public ReservationService(JdbcTemplate jdbc, PlatformTransactionManager txManager, ReservationMetrics metrics) {
-		this.jdbc = jdbc;
+	public ReservationService(ShowRepository shows, SeatRepository seatRepository,
+			ReservationRepository reservations,
+			ReservationSeatRepository seatRows, UserShowQuotaRepository quotas, IdempotencyKeyRepository keys,
+			PlatformTransactionManager txManager, ReservationMetrics metrics) {
+		this.shows = shows;
+		this.seatRepository = seatRepository;
+		this.reservations = reservations;
+		this.seatRows = seatRows;
+		this.quotas = quotas;
+		this.keys = keys;
 		this.tx = new TransactionTemplate(txManager);
 		this.tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 		this.metrics = metrics;
@@ -115,25 +130,14 @@ public class ReservationService {
 		// transaction blocks on this row until the first commits or aborts, so
 		// there is no window for a double reserve. A declined first attempt
 		// rolls back and frees the key.
-		int keyInserted = jdbc.update(
-				"INSERT INTO idempotency_keys (user_id, idempotency_key, request_hash) VALUES (?,?,?) "
-						+ "ON CONFLICT (user_id, idempotency_key) DO NOTHING",
-				caller.userId(), idempotencyKey, requestHash);
-		if (keyInserted == 0) {
+		if (keys.insertIgnore(caller.userId(), idempotencyKey, requestHash) == 0) {
 			return replay(caller.userId(), idempotencyKey, requestHash);
 		}
 
-		long pricePaise;
-		int perUserLimit;
-		try {
-			Map<String, Object> show = jdbc.queryForMap(
-					"SELECT price_paise, per_user_limit FROM shows WHERE id = ?", showId);
-			pricePaise = ((Number) show.get("price_paise")).longValue();
-			perUserLimit = ((Number) show.get("per_user_limit")).intValue();
-		}
-		catch (EmptyResultDataAccessException e) {
-			throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown show.");
-		}
+		ShowEntity show = shows.findById(showId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown show."));
+		long pricePaise = show.getPricePaise();
+		int perUserLimit = show.getPerUserLimit();
 
 		if (labels.size() > perUserLimit) {
 			throw new ApiException(HttpStatus.CONFLICT, "PER_USER_LIMIT",
@@ -145,35 +149,22 @@ public class ReservationService {
 		// the transaction when the seat step declines, so failed attempts
 		// consume nothing. Idempotent replays (G7) return before this point
 		// and never increment again.
-		jdbc.update(
-				"INSERT INTO user_show_quota (user_id, show_id, active_seats) VALUES (?,?,0) "
-						+ "ON CONFLICT (user_id, show_id) DO NOTHING",
-				caller.userId(), showId);
-		int quotaAffected = jdbc.update(
-				"UPDATE user_show_quota SET active_seats = active_seats + ? "
-						+ "WHERE user_id = ? AND show_id = ? AND active_seats + ? <= ?",
-				labels.size(), caller.userId(), showId, labels.size(), perUserLimit);
-		if (quotaAffected == 0) {
+		quotas.upsertZero(caller.userId(), showId);
+		if (quotas.incrementIfFits(caller.userId(), showId, labels.size(), perUserLimit) == 0) {
 			throw new ApiException(HttpStatus.CONFLICT, "PER_USER_LIMIT",
 					"Would exceed per_user_limit of " + perUserLimit + ".");
 		}
 
-		List<SeatRow> locked = jdbc.query(con -> {
-			PreparedStatement ps = con.prepareStatement(
-					"SELECT seat_label, status FROM seats WHERE show_id = ? AND seat_label = ANY(?) "
-							+ "ORDER BY seat_label FOR UPDATE");
-			ps.setObject(1, showId);
-			ps.setArray(2, con.createArrayOf("text", labels.toArray(new String[0])));
-			return ps;
-		}, (rs, i) -> new SeatRow(rs.getString(1), rs.getString(2)));
+		List<SeatEntity> locked = seatRepository.lockSeats(showId, labels);
 
 		if (locked.size() != labels.size()) {
-			var found = locked.stream().map(SeatRow::label).toList();
+			var found = locked.stream().map(SeatEntity::getSeatLabel).toList();
 			var missing = labels.stream().filter(l -> !found.contains(l)).toList();
 			throw new ApiException(HttpStatus.NOT_FOUND, "INVALID_SEAT",
 					"Unknown seats for this show.", Map.of("seats", missing));
 		}
-		var taken = locked.stream().filter(r -> !"available".equals(r.status())).map(SeatRow::label).toList();
+		var taken = locked.stream().filter(r -> !"available".equals(r.getStatus())).map(SeatEntity::getSeatLabel)
+				.toList();
 		if (!taken.isEmpty()) {
 			throw new ApiException(HttpStatus.CONFLICT, "SEAT_TAKEN",
 					"One or more requested seats are no longer available.", Map.of("seats", taken));
@@ -188,33 +179,15 @@ public class ReservationService {
 		}
 
 		UUID reservationId = UUID.randomUUID();
-		int affected = jdbc.update(con -> {
-			PreparedStatement ps = con.prepareStatement(
-					"UPDATE seats SET status='confirmed', reservation_id=?, user_id=?, updated_at=now() "
-							+ "WHERE show_id=? AND seat_label = ANY(?) AND status='available'");
-			ps.setObject(1, reservationId);
-			ps.setString(2, caller.userId());
-			ps.setObject(3, showId);
-			ps.setArray(4, con.createArrayOf("text", labels.toArray(new String[0])));
-			return ps;
-		});
-		if (affected != labels.size()) {
+		if (seatRepository.confirmSeats(showId, labels, reservationId, caller.userId()) != labels.size()) {
 			throw new ApiException(HttpStatus.CONFLICT, "SEAT_TAKEN",
 					"One or more requested seats are no longer available.", Map.of("seats", labels));
 		}
 
-		jdbc.update(
-				"INSERT INTO reservations (id, show_id, user_id, status, amount_paise) VALUES (?,?,?,?,?)",
-				reservationId, showId, caller.userId(), "confirmed", amount);
-		jdbc.batchUpdate(
-				"INSERT INTO reservation_seats (reservation_id, show_id, seat_label, active) VALUES (?,?,?,TRUE)",
-				labels, labels.size(), (ps, label) -> {
-					ps.setObject(1, reservationId);
-					ps.setObject(2, showId);
-					ps.setString(3, label);
-				});
-		jdbc.update("UPDATE idempotency_keys SET reservation_id = ? WHERE user_id = ? AND idempotency_key = ?",
-				reservationId, caller.userId(), idempotencyKey);
+		reservations.save(new ReservationEntity(reservationId, showId, caller.userId(), amount));
+		seatRows.saveAll(labels.stream().map(label -> new ReservationSeatEntity(reservationId, showId, label))
+				.toList());
+		keys.linkReservation(caller.userId(), idempotencyKey, reservationId);
 
 		return new ReserveOutcome(new ReserveResponse(reservationId, showId, caller.userId(),
 				new ArrayList<>(labels), amount, "confirmed"), false);
@@ -225,46 +198,28 @@ public class ReservationService {
 	 * reservation with no seat, quota or counter movement.
 	 */
 	private ReserveOutcome replay(String userId, String idempotencyKey, String requestHash) {
-		List<Map<String, Object>> rows = jdbc.queryForList(
-				"SELECT request_hash, reservation_id FROM idempotency_keys WHERE user_id = ? AND idempotency_key = ?",
-				userId, idempotencyKey);
-		if (rows.isEmpty()) {
+		var stored = keys.findByUserIdAndIdempotencyKey(userId, idempotencyKey);
+		if (stored.isEmpty()) {
 			// Defensive: the conflicting row vanished (first attempt aborted
 			// after we observed the conflict). Re-insert and proceed as first-timer.
-			jdbc.update(
-					"INSERT INTO idempotency_keys (user_id, idempotency_key, request_hash) VALUES (?,?,?) "
-							+ "ON CONFLICT (user_id, idempotency_key) DO NOTHING",
-					userId, idempotencyKey, requestHash);
+			keys.insertIgnore(userId, idempotencyKey, requestHash);
 			throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "RETRY_LATER",
 					"Concurrent reservation in progress; retry with the same key.");
 		}
-		String storedHash = (String) rows.get(0).get("request_hash");
-		if (!requestHash.equals(storedHash)) {
+		if (!requestHash.equals(stored.get().getRequestHash())) {
 			throw new ApiException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED",
 					"Idempotency key was already used with a different request.");
 		}
-		UUID reservationId = (UUID) rows.get(0).get("reservation_id");
+		UUID reservationId = stored.get().getReservationId();
 		if (reservationId == null) {
 			throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "RETRY_LATER",
 					"Concurrent reservation in progress; retry with the same key.");
 		}
-		Map<String, Object> reservation;
-		try {
-			reservation = jdbc.queryForMap(
-					"SELECT show_id, user_id, amount_paise, status FROM reservations WHERE id = ?", reservationId);
-		}
-		catch (EmptyResultDataAccessException e) {
-			throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Original reservation is gone.");
-		}
-		List<String> seats = jdbc.queryForList(
-				"SELECT seat_label FROM reservation_seats WHERE reservation_id = ? ORDER BY seat_label",
-				String.class, reservationId);
-		// TODO(G14): increment the idempotent-replay counter only (never confirmed).
-		return new ReserveOutcome(
-				new ReserveResponse(reservationId, (UUID) reservation.get("show_id"),
-						(String) reservation.get("user_id"), seats,
-						((Number) reservation.get("amount_paise")).longValue(), (String) reservation.get("status")),
-				true);
+		ReservationEntity reservation = reservations.findById(reservationId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Original reservation is gone."));
+		List<String> seats = seatRows.findLabels(reservationId);
+		return new ReserveOutcome(new ReserveResponse(reservationId, reservation.getShowId(),
+				reservation.getUserId(), seats, reservation.getAmountPaise(), reservation.getStatus()), true);
 	}
 
 	/**
@@ -305,81 +260,50 @@ public class ReservationService {
 	}
 
 	private CancelResponse cancelTx(UUID reservationId, AuthPrincipal caller) {
-		Map<String, Object> reservation;
-		try {
-			reservation = jdbc.queryForMap(
-					"SELECT show_id, user_id, status FROM reservations WHERE id = ?", reservationId);
-		}
-		catch (EmptyResultDataAccessException e) {
-			throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown reservation.");
-		}
-		UUID showId = (UUID) reservation.get("show_id");
-		String owner = (String) reservation.get("user_id");
+		ReservationEntity reservation = reservations.findById(reservationId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown reservation."));
+		UUID showId = reservation.getShowId();
+		String owner = reservation.getUserId();
 		if (!caller.userId().equals(owner)) {
 			throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Only the owner can cancel.");
 		}
-		if ("cancelled".equals(reservation.get("status"))) {
+		if ("cancelled".equals(reservation.getStatus())) {
 			return cancelState(reservationId, showId, owner);
 		}
 
-		List<String> labels = jdbc.queryForList(
-				"SELECT seat_label FROM seats WHERE reservation_id = ? ORDER BY seat_label", String.class,
-				reservationId);
+		// Lock-free label read for the quota count; the quota UPDATE below
+		// takes the quota lock before any seat lock (global order).
+		List<String> labels = seatRows.findLabels(reservationId);
+		quotas.decrement(owner, showId, labels.size());
 
-		jdbc.update("UPDATE user_show_quota SET active_seats = active_seats - ? WHERE user_id = ? AND show_id = ?",
-				labels.size(), owner, showId);
+		List<String> locked = seatRepository.lockByReservation(reservationId).stream()
+				.map(SeatEntity::getSeatLabel)
+				.toList();
 
-		List<String> locked = jdbc.query(con -> {
-			PreparedStatement ps = con.prepareStatement(
-					"SELECT seat_label FROM seats WHERE reservation_id = ? ORDER BY seat_label FOR UPDATE");
-			ps.setObject(1, reservationId);
-			return ps;
-		}, (rs, i) -> rs.getString(1));
-
-		int transitioned = jdbc.update(
-				"UPDATE reservations SET status='cancelled', cancelled_at=now() "
-						+ "WHERE id=? AND user_id=? AND status='confirmed'",
-				reservationId, owner);
-		if (transitioned == 0) {
+		if (reservations.cancelReservation(reservationId, owner) == 0) {
 			// A concurrent cancel committed first; quota/seat moves above roll
 			// back with this attempt — retry to return the idempotent 200.
 			throw new CancelConflictException();
 		}
 
 		// Guarded by reservation_id: seats re-booked to a new owner since are untouched.
-		jdbc.update(con -> {
-			PreparedStatement ps = con.prepareStatement(
-					"UPDATE seats SET status='available', reservation_id=NULL, user_id=NULL, updated_at=now() "
-							+ "WHERE reservation_id=? AND status IN ('held','confirmed')");
-			ps.setObject(1, reservationId);
-			return ps;
-		});
-		jdbc.update("UPDATE reservation_seats SET active=FALSE WHERE reservation_id=? AND active", reservationId);
-		// TODO(G14): increment reservations_cancelled_total and seats_released_total.
+		seatRepository.releaseSeats(reservationId);
+		seatRows.deactivate(reservationId);
 
 		return new CancelResponse(reservationId, showId, owner, locked, "cancelled");
 	}
 
 	private CancelResponse readCancelState(UUID reservationId, AuthPrincipal caller) {
-		Map<String, Object> reservation;
-		try {
-			reservation = jdbc.queryForMap(
-					"SELECT show_id, user_id, status FROM reservations WHERE id = ?", reservationId);
-		}
-		catch (EmptyResultDataAccessException e) {
-			throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown reservation.");
-		}
-		if (!caller.userId().equals(reservation.get("user_id"))) {
+		ReservationEntity reservation = reservations.findById(reservationId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown reservation."));
+		if (!caller.userId().equals(reservation.getUserId())) {
 			throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Only the owner can cancel.");
 		}
-		return cancelState(reservationId, (UUID) reservation.get("show_id"), (String) reservation.get("user_id"));
+		return cancelState(reservationId, reservation.getShowId(), reservation.getUserId());
 	}
 
 	private CancelResponse cancelState(UUID reservationId, UUID showId, String owner) {
-		List<String> seats = jdbc.queryForList(
-				"SELECT seat_label FROM reservation_seats WHERE reservation_id = ? ORDER BY seat_label",
-				String.class, reservationId);
-		return new CancelResponse(reservationId, showId, owner, seats, "cancelled");
+		return new CancelResponse(reservationId, showId, owner, seatRows.findLabels(reservationId), "cancelled");
 	}
 
 	/** Internal: lost a concurrent-cancel race; the attempt rolled back — re-read instead. */
@@ -416,8 +340,5 @@ public class ReservationService {
 			return null;
 		}
 		return raw.length() <= 12 ? raw : raw.substring(0, 12);
-	}
-
-	private record SeatRow(String label, String status) {
 	}
 }

@@ -154,3 +154,16 @@ I can extend this live: every lock's order is documented in
 `ReservationService`'s javadoc, and each guarantee has a named
 Testcontainers test (`ReserveServiceIT`, `SchemaInvariantIT`,
 `ShowServiceIT`) runnable via `./mvnw verify`.
+
+**Addendum — JPA migration (post-G22, user-directed).** The user asked to
+replace `JdbcTemplate` with JPA repositories + entities and update the spec
+accordingly (§2 table now says so; Flyway still owns DDL with
+`ddl-auto=validate`). The agent's constraint, accepted: JPQL cannot express
+sorted `FOR UPDATE` locking, guarded conditional updates, or bulk insert, so
+contested paths remain native `@Query` *inside* the repositories
+(`lockSeats`, `confirmSeats`, quota/idempotency gates, jsonb bulk insert) —
+the atomicity argument above is unchanged, only the plumbing moved from
+`JdbcTemplate` to repositories. Deliberately not `@Version`: concurrency is
+governed by pessimistic locks, and managed entities are never re-read after
+a native write in the same transaction. Concurrency proofs re-run unchanged
+in CI (`./mvnw verify`).

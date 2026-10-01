@@ -2,7 +2,8 @@ package com.bookmyseat.observability;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.JdbcTemplate;
+
+import com.bookmyseat.show.SeatRepository;
 
 import io.micrometer.core.instrument.MeterRegistry;
 
@@ -16,7 +17,7 @@ public class ObservabilityConfig {
 	}
 
 	@Bean
-	SeatGauges seatGauges(JdbcTemplate jdbc, MeterRegistry registry) {
-		return new SeatGauges(jdbc, registry);
+	SeatGauges seatGauges(SeatRepository seats, MeterRegistry registry) {
+		return new SeatGauges(seats, registry);
 	}
 }

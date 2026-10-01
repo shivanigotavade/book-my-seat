@@ -57,7 +57,7 @@ The service is judged on the **running system**, not the write-up: the reviewers
 | Framework | Spring Boot 3.3+ | Web, Validation, Security, Actuator |
 | Build | Apache Maven 3.9+ (with Maven Wrapper) | `./mvnw` committed so clean checkouts build without a local Maven |
 | Datastore | PostgreSQL 16 | Single database — the atomic decision lives here |
-| Data access | Spring `JdbcTemplate` / `NamedParameterJdbcTemplate` (or jOOQ) | Explicit SQL for guarded updates and lock ordering; avoid ORM magic on the hot path |
+| Data access | Spring Data JPA repositories + entities (native SQL for guarded updates and lock ordering) | Explicit SQL for guarded updates and lock ordering; Flyway owns DDL, entities are a read/write view only |
 | Migrations | Flyway | Schema versioned in `src/main/resources/db/migration` |
 | Connection pool | HikariCP | Explicitly sized (see G12) |
 | Auth | Spring Security + JWT (HS256) | Role claim: `USER` / `ADMIN` |

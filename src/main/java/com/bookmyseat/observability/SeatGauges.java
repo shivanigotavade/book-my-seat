@@ -5,7 +5,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.bookmyseat.show.SeatRepository;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -19,12 +19,12 @@ public class SeatGauges {
 
 	private static final long TTL_MILLIS = 1000;
 
-	private final JdbcTemplate jdbc;
+	private final SeatRepository seats;
 	private final AtomicReference<Map<String, Long>> cached = new AtomicReference<>(Map.of());
 	private final AtomicLong refreshedAt = new AtomicLong(0);
 
-	public SeatGauges(JdbcTemplate jdbc, MeterRegistry registry) {
-		this.jdbc = jdbc;
+	public SeatGauges(SeatRepository seats, MeterRegistry registry) {
+		this.seats = seats;
 		Gauge.builder("bookmyseat_seats_available", this, g -> g.value("available"))
 				.description("Seats currently available").register(registry);
 		Gauge.builder("bookmyseat_seats_held", this, g -> g.value("held")).description("Seats currently held")
@@ -50,8 +50,9 @@ public class SeatGauges {
 
 	private Map<String, Long> load() {
 		Map<String, Long> counts = new ConcurrentHashMap<>(Map.of("available", 0L, "held", 0L, "confirmed", 0L));
-		jdbc.queryForList("SELECT status, COUNT(*) AS n FROM seats GROUP BY status")
-				.forEach(row -> counts.put((String) row.get("status"), ((Number) row.get("n")).longValue()));
+		for (Object[] row : seats.countAllByStatus()) {
+			counts.put((String) row[0], (Long) row[1]);
+		}
 		return Map.copyOf(counts);
 	}
 }
