@@ -16,6 +16,10 @@ public record ApiError(@JsonProperty("error") ErrorBody error) {
 	}
 
 	public static ApiError of(String code, String message, String requestId) {
-		return new ApiError(new ErrorBody(code, message, Map.of(), requestId));
+		return of(code, message, Map.of(), requestId);
+	}
+
+	public static ApiError of(String code, String message, Object details, String requestId) {
+		return new ApiError(new ErrorBody(code, message, details == null ? Map.of() : details, requestId));
 	}
 }
