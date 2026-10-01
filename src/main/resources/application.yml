@@ -26,6 +26,7 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
   jackson:
+    property-naming-strategy: SNAKE_CASE
     serialization:
       fail-on-empty-beans: false
 
