@@ -3,6 +3,7 @@ package com.bookmyseat.reservation;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -148,6 +149,77 @@ class ReserveServiceIT {
 	void overLimitRequestFailsFast() {
 		UUID showId = createShow(List.of("A1", "A2", "A3"), "100", "2");
 		assertThatThrownBy(() -> reserves.reserve(showId, List.of("A1", "A2", "A3"), key("k-1"), null, ALICE))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("PER_USER_LIMIT"));
+	}
+
+	@Test
+	void perUserLimitRaceCapsAtFour() throws Exception {
+		List<String> seats = new ArrayList<>();
+		for (int i = 0; i < 10; i++) {
+			seats.add("S" + i);
+		}
+		UUID showId = createShow(seats, "100", null);
+		int racers = 10;
+		var start = new CountDownLatch(1);
+		var done = new CountDownLatch(racers);
+		var wins = new AtomicInteger();
+		var codes = new ConcurrentHashMap<String, AtomicInteger>();
+
+		try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+			for (int i = 0; i < racers; i++) {
+				final int n = i;
+				pool.submit(() -> {
+					try {
+						start.await();
+						reserves.reserve(showId, List.of("S" + n), key("q-" + n), null, ALICE);
+						wins.incrementAndGet();
+					}
+					catch (ApiException e) {
+						codes.computeIfAbsent(e.getCode(), c -> new AtomicInteger()).incrementAndGet();
+					}
+					catch (Exception e) {
+						codes.computeIfAbsent("UNEXPECTED:" + e, c -> new AtomicInteger()).incrementAndGet();
+					}
+					finally {
+						done.countDown();
+					}
+					return null;
+				});
+			}
+			start.countDown();
+			assertThat(done.await(120, TimeUnit.SECONDS)).isTrue();
+		}
+
+		assertThat(wins.get()).isEqualTo(4);
+		assertThat(codes.keySet()).containsExactly("PER_USER_LIMIT");
+		assertThat(jdbc.queryForObject(
+				"SELECT active_seats FROM user_show_quota WHERE user_id = 'alice' AND show_id = ?",
+				Integer.class, showId)).isEqualTo(4);
+		assertThat(jdbc.queryForObject(
+				"SELECT COUNT(*) FROM seats WHERE show_id = ? AND status = 'confirmed' AND user_id = 'alice'",
+				Integer.class, showId)).isEqualTo(4);
+	}
+
+	@Test
+	void failedMultiSeatRequestLeavesQuotaUntouched() {
+		UUID showId = createShow(List.of("A1", "A2", "A3", "A4", "A5"), "100", null);
+		reserves.reserve(showId, List.of("A1"), key("k-1"), null, ALICE);
+		reserves.reserve(showId, List.of("A2"), key("k-2"), null, ALICE);
+		reserves.reserve(showId, List.of("A3"), key("k-3"), null, ALICE);
+
+		assertThatThrownBy(() -> reserves.reserve(showId, List.of("A4", "A5"), key("k-4"), null, ALICE))
+				.isInstanceOfSatisfying(ApiException.class,
+						e -> assertThat(e.getCode()).isEqualTo("PER_USER_LIMIT"));
+		assertThat(jdbc.queryForObject(
+				"SELECT active_seats FROM user_show_quota WHERE user_id = 'alice' AND show_id = ?",
+				Integer.class, showId)).isEqualTo(3);
+		assertThat(jdbc.queryForObject(
+				"SELECT COUNT(*) FROM seats WHERE show_id = ? AND seat_label IN ('A4','A5') AND status = 'available'",
+				Integer.class, showId)).isEqualTo(2);
+
+		reserves.reserve(showId, List.of("A4"), key("k-5"), null, ALICE);
+		assertThatThrownBy(() -> reserves.reserve(showId, List.of("A5"), key("k-6"), null, ALICE))
 				.isInstanceOfSatisfying(ApiException.class,
 						e -> assertThat(e.getCode()).isEqualTo("PER_USER_LIMIT"));
 	}

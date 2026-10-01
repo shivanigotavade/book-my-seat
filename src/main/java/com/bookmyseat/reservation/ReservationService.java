@@ -66,10 +66,28 @@ public class ReservationService {
 			throw new ApiException(HttpStatus.CONFLICT, "PER_USER_LIMIT",
 					"Request exceeds per_user_limit of " + perUserLimit + ".");
 		}
-		// TODO(G6): conditional quota increment on user_show_quota here (serialises
-		// parallel requests from the same user; rolls back if the seat step fails).
-		// TODO(G7): idempotency gate first statement here (same-transaction key
-		// insert; replay returns the stored reservation without touching seats).
+		// TODO(G7): idempotency gate goes first here — same-transaction key
+		// insert on (user_id, key); a concurrent same-key transaction blocks on
+		// that row until the first commits/aborts, and replays return the
+		// stored reservation before touching quota or seats.
+		// Quota gate (G6): the conditional UPDATE takes the quota row lock,
+		// serialising parallel requests from the same user. It sits before the
+		// seat locks per the global order (quota → seats) and rolls back with
+		// the transaction when the seat step declines, so failed attempts
+		// consume nothing. Idempotent replays (G7) return before this point
+		// and never increment again.
+		jdbc.update(
+				"INSERT INTO user_show_quota (user_id, show_id, active_seats) VALUES (?,?,0) "
+						+ "ON CONFLICT (user_id, show_id) DO NOTHING",
+				caller.userId(), showId);
+		int quotaAffected = jdbc.update(
+				"UPDATE user_show_quota SET active_seats = active_seats + ? "
+						+ "WHERE user_id = ? AND show_id = ? AND active_seats + ? <= ?",
+				labels.size(), caller.userId(), showId, labels.size(), perUserLimit);
+		if (quotaAffected == 0) {
+			throw new ApiException(HttpStatus.CONFLICT, "PER_USER_LIMIT",
+					"Would exceed per_user_limit of " + perUserLimit + ".");
+		}
 
 		List<SeatRow> locked = jdbc.query(con -> {
 			PreparedStatement ps = con.prepareStatement(
