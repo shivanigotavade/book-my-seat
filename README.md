@@ -101,7 +101,8 @@ stampede with replays, idempotency/limit/spoof/cancel checks, then
 `available + held + confirmed == total_seats` plus metrics reconciliation
 (`confirmed_total` delta vs client `201`s). Prints PASS/FAIL per check and
 exits non-zero on failure. Tune via `SHOW_SEATS HOT_USERS STAMPEDE_REQUESTS
-HOT_SET STAMPEDE_USERS IDEM_RETRIES ADMIN_TOKEN`.
+HOT_SET STAMPEDE_USERS IDEM_RETRIES ADMIN_TOKEN` (plus `STAMPEDE_CONCURRENCY`,
+default 1000 in-flight — sustained pressure, not one instant socket pile-on).
 
 ## Design decisions (summary)
 

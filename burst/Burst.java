@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class Burst {
 
     record Cfg(String base, String adminToken, int showSeats, int hotUsers, String hotSeat,
-            int stampedeRequests, int hotSet, int stampedeUsers, int idemRetries) {
+            int stampedeRequests, int hotSet, int stampedeUsers, int idemRetries, int stampedeConcurrency) {
     }
 
     record Resp(int status, String body, String replayed, long latencyMs, String netError) {
@@ -40,7 +40,7 @@ public class Burst {
         if (args.length > 0 && (args[0].equals("--help") || args[0].equals("-h"))) {
             System.out.println("usage: java burst/Burst.java <BASE_URL>");
             System.out.println("env: ADMIN_TOKEN SHOW_SEATS HOT_USERS HOT_SEAT STAMPEDE_REQUESTS "
-                    + "HOT_SET STAMPEDE_USERS IDEM_RETRIES");
+                    + "HOT_SET STAMPEDE_USERS IDEM_RETRIES STAMPEDE_CONCURRENCY");
             return;
         }
         if (args.length < 1) {
@@ -51,7 +51,7 @@ public class Burst {
         cfg = new Cfg(base, env("ADMIN_TOKEN", "dev-admin-token"), envInt("SHOW_SEATS", 20000),
                 envInt("HOT_USERS", 500), System.getenv().getOrDefault("HOT_SEAT", "A12"),
                 envInt("STAMPEDE_REQUESTS", 20000), envInt("HOT_SET", 10), envInt("STAMPEDE_USERS", 200),
-                envInt("IDEM_RETRIES", 30));
+                envInt("IDEM_RETRIES", 30), envInt("STAMPEDE_CONCURRENCY", 1000));
         client = HttpClient.newBuilder()
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .connectTimeout(Duration.ofSeconds(10)).build();
@@ -102,6 +102,10 @@ public class Burst {
         }
         var lastReq = new ConcurrentHashMap<Integer, LastReq>();
         long stampStart = System.nanoTime();
+        // Cap in-flight requests below the server's max-connections: 20k total
+        // requests still fire, but as sustained pressure rather than one
+        // instant socket pile-on the transport can't absorb.
+        var inFlight = new java.util.concurrent.Semaphore(cfg.stampedeConcurrency());
         runParallel(cfg.stampedeRequests(), i -> {
             int user = i % cfg.stampedeUsers();
             String body;
@@ -114,8 +118,19 @@ public class Burst {
                 body = stampedeBody(i);
                 lastReq.put(user, new LastReq(key, body));
             }
-            Resp r = call("POST", "/shows/" + showId + "/reserve", stampedeTokens.get(user),
-                    body.replace("\"idempotency_key\":\"K\"", "\"idempotency_key\":\"" + key + "\""));
+            Resp r;
+            try {
+                inFlight.acquire();
+                try {
+                    r = call("POST", "/shows/" + showId + "/reserve", stampedeTokens.get(user),
+                            body.replace("\"idempotency_key\":\"K\"", "\"idempotency_key\":\"" + key + "\""));
+                } finally {
+                    inFlight.release();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
             tallyReplayAware(r, stampCodes, body, ConcurrentHashMap.newKeySet());
         });
         long stampSecs = Math.max(1, TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - stampStart));
