@@ -26,9 +26,13 @@ services:
       - key: ADMIN_TOKEN
         generateValue: true
       - key: AUTH_DEV_TOKEN_ENDPOINT_ENABLED
-        value: true
+        value: "true"
       - key: HIKARI_MAX_POOL_SIZE
-        value: 10
+        value: "10"
+      - key: HIKARI_MIN_IDLE
+        value: "2"
+      - key: JWT_EXPIRATION_SECONDS
+        value: "86400"
       - key: LOG_LEVEL
         value: INFO
 
