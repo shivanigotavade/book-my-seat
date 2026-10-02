@@ -33,6 +33,7 @@ public class Burst {
     static Cfg cfg;
     static HttpClient client;
     static final List<Long> latencies = Collections.synchronizedList(new ArrayList<>());
+    static final AtomicLong calls = new AtomicLong();
     static final Map<String, AtomicInteger> netErrors = new ConcurrentHashMap<>();
     static final List<String> failures = Collections.synchronizedList(new ArrayList<>());
     static final AtomicLong client201s = new AtomicLong();
@@ -56,8 +57,24 @@ public class Burst {
                 envInt("IDEM_RETRIES", 30), envInt("STAMPEDE_CONCURRENCY", 1000),
                 envInt("SETUP_CONCURRENCY", 50), envInt("STORM_CONCURRENCY", 500));
         client = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .connectTimeout(Duration.ofSeconds(10)).build();
+        Thread ticker = new Thread(() -> {
+            long last = 0;
+            while (true) {
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                long now = calls.get();
+                System.out.println("  ... " + now + " calls so far (" + (now - last) / 5 + "/s)");
+                last = now;
+            }
+        });
+        ticker.setDaemon(true);
+        ticker.start();
 
         System.out.println("== setup: readiness + admin show ==");
         boolean up = false;
@@ -472,10 +489,11 @@ public class Burst {
     }
 
     static Resp call(String method, String path, String token, String body) {
+        calls.incrementAndGet();
         long start = System.nanoTime();
         try {
             var builder = HttpRequest.newBuilder(URI.create(cfg.base() + path))
-                    .timeout(Duration.ofSeconds(90));
+                    .timeout(Duration.ofSeconds(20));
             if (token != null) {
                 builder.header("Authorization", "Bearer " + token);
             }
