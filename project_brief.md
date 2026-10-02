@@ -19,6 +19,7 @@
 9. [Definition of Done (mapped to the grader's checks)](#9-definition-of-done-mapped-to-the-graders-checks)
 10. [Suggested Timeline & Commit Plan](#10-suggested-timeline--commit-plan)
 11. [Interview Readiness](#11-interview-readiness)
+12. [Amendments & Follow-up Goals](#12-amendments--follow-up-goals)
 
 ---
 
@@ -124,6 +125,13 @@ UI, real payment processing, notifications, multi-region, seat maps/pricing tier
 | G20 | Documentation (README + WRITEUP) | Mandatory deliverables |
 | G21 | Git history | Incremental commits show how work was done |
 | G22 | AI usage disclosure | Honest "directed vs decided" |
+| G23 | Properties configuration | Same externalised config in `application.properties` |
+| G24 | JPA repositories & entities | Same guarantees behind repositories, native SQL on hot paths |
+| G25 | Package consolidation | `entity` / `repository` / `controller` / `service` packages |
+| G26 | Bootstrap admin issuance | Short-lived ADMIN JWTs via bootstrap secret |
+| G27 | Postman collection & brief | Importable requests + request catalogue |
+| G28 | Rolling file log capture | Same JSON lines in `target/logs/` for local runs |
+| G29 | Live-burst hardening fixes | Timestamp defaults, flush ordering before guarded writes |
 
 ---
 
@@ -690,3 +698,65 @@ You will be asked to **extend the service live**. Pre-think these likely extensi
 | Many hot shows / sharding | Partition `seats` by `show_id`; per-show connection routing |
 
 **Be ready to explain, without notes:** every lock and its order · why READ COMMITTED + `FOR UPDATE` is enough here · what the partial unique index protects against · why a decline doesn't consume an idempotency key · why the replay returns `200` not `201` · how readiness failing closed behaves on a DB partition.
+
+---
+
+## 12. Amendments & Follow-up Goals (G23+)
+
+Work accepted after G22, recorded with the same rigour. Each amends the
+sections above; the newest statement wins on conflict.
+
+### G23 — Properties configuration
+Same externalised config as G1, expressed in `application.properties`
+(1:1 key mapping, env placeholders preserved). `application.yml` deleted;
+all references updated.
+
+### G24 — JPA repositories & entities
+Data access moves from `JdbcTemplate` to Spring Data JPA repositories +
+entities (spec §2 updated). Non-negotiable: Flyway still owns DDL
+(`ddl-auto=validate`, `open-in-view=false`); contested paths stay native
+`@Query` inside the repositories (sorted `FOR UPDATE` locks, guarded
+conditional updates, jsonb bulk insert) because JPQL cannot express them.
+Entities initialize every DB-defaulted column (e.g. `created_at`) in Java —
+Hibernate inserts explicit `NULL`s that override column defaults. No
+`@Version`: concurrency is governed by pessimistic locks, and managed
+entities are never re-read after a native write in one transaction.
+
+**Acceptance:** full suite green; concurrency ITs re-prove G5–G9 in CI.
+
+### G25 — Package consolidation
+`entity/` holds all entities, `repository/` all repositories,
+`controller/` all controllers, `service/` all services (moved with history;
+spec §8 layout synced). No behaviour change.
+
+### G26 — Bootstrap admin issuance
+`POST /auth/token` takes optional `role` (default `USER`; garbage → `400`).
+`role=ADMIN` requires the bootstrap `ADMIN_TOKEN` secret as bearer
+(constant-time compare; wrong/missing → `401`) and mints short-lived ADMIN
+JWTs, independent of the dev-endpoint flag. Static-token auth still works
+as fallback. Controller renamed `DevTokenController` → `AuthController`
+(no environment words in names).
+
+**Acceptance:** 8 slice tests (default/open/admin-ok/admin-wrong/
+admin-despite-disabled/unknown-role/bad-user/disabled-404).
+
+### G27 — Postman collection & brief
+`book-my-seat.postman_collection.json` (17 requests, 5 folders, chained
+variables incl. `adminJwt`, rerun-safe fixed keys) validated by parser
+checks; `postman_brief.md` catalogues every request plus from-scratch
+creation steps and troubleshooting.
+
+### G28 — Rolling file log capture
+Same JSON lines appended to `${LOG_PATH}/book-my-seat-api.log` (default
+`target/logs/`, rolling 100MB/30d, git-ignored). Lesson recorded:
+Logback's own parser needs `${VAR:-default}` — Spring-style `${VAR:default}`
+resolves to a literal broken path and fails context startup.
+
+### G29 — Live-burst hardening fixes
+Bugs only a live burst could surface, each with the trace that convicted it:
+entity timestamp defaults (G24 follow-up) and `saveAndFlush()` before the
+guarded seat update (entity inserts defer to flush while native writes run
+immediately — the FK safety net caught it as a loud `23503`, never silent
+corruption).
+
+**Acceptance:** `./burst.sh` against the live URL prints all-green.
