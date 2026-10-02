@@ -188,12 +188,15 @@ public class ReservationService {
 		}
 
 		UUID reservationId = UUID.randomUUID();
+		// Flushed now (not at commit): the guarded seat update below carries
+		// a foreign key to this row, and native queries execute immediately
+		// while entity inserts otherwise wait for flush.
+		reservations.saveAndFlush(new ReservationEntity(reservationId, showId, caller.userId(), amount));
 		if (seatRepository.confirmSeats(showId, labels, reservationId, caller.userId()) != labels.size()) {
 			throw new ApiException(HttpStatus.CONFLICT, "SEAT_TAKEN",
 					"One or more requested seats are no longer available.", Map.of("seats", labels));
 		}
 
-		reservations.save(new ReservationEntity(reservationId, showId, caller.userId(), amount));
 		seatRows.saveAll(labels.stream().map(label -> new ReservationSeatEntity(reservationId, showId, label))
 				.toList());
 		keys.linkReservation(caller.userId(), idempotencyKey, reservationId);
