@@ -34,6 +34,8 @@ public class Burst {
     static HttpClient client;
     static final List<Long> latencies = Collections.synchronizedList(new ArrayList<>());
     static final AtomicLong calls = new AtomicLong();
+    static Map<String, Double> metricsBefore = Map.of();
+    static final Map<String, AtomicInteger> reserveOutcomes = new ConcurrentHashMap<>();
     static final Map<String, AtomicInteger> netErrors = new ConcurrentHashMap<>();
     static final List<String> failures = Collections.synchronizedList(new ArrayList<>());
     static final AtomicLong client201s = new AtomicLong();
@@ -86,7 +88,7 @@ public class Burst {
             }
         }
         expect(up, "readiness is 200");
-        Map<String, Double> metricsBefore = scrapeMetrics();
+        metricsBefore = scrapeMetrics();
         List<String> labels = new ArrayList<>();
         for (int i = 0; i < cfg.showSeats(); i++) {
             labels.add("A" + i);
@@ -221,6 +223,7 @@ public class Burst {
         System.out.println("== same key, different seats ==");
         Resp reused = call("POST", "/shows/" + showId + "/reserve", idemToken,
                 "{\"seats\":[\"IDEM2\"],\"idempotency_key\":\"idem-1\"}");
+        bump(reused);
         check(reused.status() == 409 && "IDEMPOTENCY_KEY_REUSED".equals(code(reused.body())),
                 "same key + different body is 409 IDEMPOTENCY_KEY_REUSED");
 
@@ -277,12 +280,15 @@ public class Burst {
         check(summary.status() == 200 && available + held + confirmed == total,
                 "available + held + confirmed == total_seats (" + available + "+" + held + "+" + confirmed + "="
                         + total + ")");
-        Map<String, Double> metricsAfter = scrapeMetrics();
-        long confirmedDelta = Math
-                .round(metricsAfter.getOrDefault("bookmyseat_reservations_confirmed_total", -1.0)
-                        - metricsBefore.getOrDefault("bookmyseat_reservations_confirmed_total", -1.0));
-        check(confirmedDelta == client201s.get(),
-                "metrics confirmed delta " + confirmedDelta + " == client 201s " + client201s.get());
+        Map<String, Double> after = scrapeMetrics();
+        reconcile("confirmed", "bookmyseat_reservations_confirmed_total", "confirmed", after);
+        for (String reason : List.of("seat-taken", "per-user-limit", "idempotent-replay", "idempotency-key-reused")) {
+            reconcile(reason, "bookmyseat_reservations_declined_total{reason=\"" + reason + "\"}", reason, after);
+        }
+        long availDelta = delta("bookmyseat_seats_available", after);
+        check(availDelta == available, "seats_available gauge delta " + availDelta + " == API available " + available);
+        long confDelta = delta("bookmyseat_seats_confirmed", after);
+        check(confDelta == confirmed, "seats_confirmed gauge delta " + confDelta + " == API confirmed " + confirmed);
 
         printReport(stampSecs);
         if (!failures.isEmpty()) {
@@ -524,7 +530,7 @@ public class Burst {
      * committed attempt replays instead of double-booking) and safe for GETs
      * and owner-scoped cancels. Only transport failures retry — 4xx/5xx stand.
      */
-    static Resp callWithRetry(String method, String path, String token, String body) {
+    static Resp callWithRetryRaw(String method, String path, String token, String body) {
         Resp r = null;
         for (int i = 1; i <= 3; i++) {
             r = call(method, path, token, body);
@@ -539,6 +545,43 @@ public class Burst {
             }
         }
         return r;
+    }
+
+    static Resp callWithRetry(String method, String path, String token, String body) {
+        Resp r = callWithRetryRaw(method, path, token, body);
+        if (path.endsWith("/reserve")) {
+            bump(r);
+        }
+        return r;
+    }
+
+    static void bump(Resp r) {
+        String k;
+        if (r.netError() != null) {
+            k = "NET";
+        } else if (r.status() >= 500) {
+            k = "5xx";
+        } else if (r.status() == 201) {
+            k = "confirmed";
+        } else if (r.status() == 200 && "true".equals(r.replayed())) {
+            k = "idempotent-replay";
+        } else if (r.status() == 409) {
+            k = code(r.body()).toLowerCase().replace('_', '-');
+        } else {
+            k = String.valueOf(r.status());
+        }
+        reserveOutcomes.computeIfAbsent(k, x -> new AtomicInteger()).incrementAndGet();
+    }
+
+    static long delta(String key, Map<String, Double> after) {
+        return Math.round(after.getOrDefault(key, 0.0) - metricsBefore.getOrDefault(key, 0.0));
+    }
+
+    static void reconcile(String label, String metricKey, String outcomeKey, Map<String, Double> after) {
+        long server = delta(metricKey, after);
+        AtomicInteger c = reserveOutcomes.get(outcomeKey);
+        long client = c == null ? 0 : c.get();
+        check(server == client, "metric " + label + " delta " + server + " == client " + client);
     }
 
     static String str(String json, String key) {
@@ -626,6 +669,7 @@ public class Burst {
         Collections.sort(sorted);
         long total = sorted.size();
         System.out.println("== outcome distribution ==");
+        printCodes("reserve outcomes, all phases", reserveOutcomes);
         System.out.println("  client 201s: " + client201s.get() + ", distinct confirmed seats: " + confirmedSeats.size());
         if (!sorted.isEmpty()) {
             System.out.println("== latency ms (n=" + total + ", ~" + (total / Math.max(1, stampSecs)) + "/s stampede) ==");
