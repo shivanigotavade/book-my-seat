@@ -36,7 +36,7 @@ services:
       - key: LOG_LEVEL
         value: INFO
       - key: SPRING_PROFILES_ACTIVE
-        value: "prod"
+        value: render
 
 databases:
   - name: book-my-seat-db
