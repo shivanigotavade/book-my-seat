@@ -12,7 +12,28 @@
     </encoder>
   </appender>
 
+  <!-- Local run capture: same JSON lines appended to
+       ${LOG_PATH}/book-my-seat-api.log (default target/logs/, git-ignored;
+       wiped by mvn clean, so copy captures out before rebuilding). -->
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_PATH:-target/logs}/book-my-seat-api.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_PATH:-target/logs}/book-my-seat-api.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+      <maxFileSize>100MB</maxFileSize>
+      <maxHistory>30</maxHistory>
+      <totalSizeCap>3GB</totalSizeCap>
+    </rollingPolicy>
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <includeMdcKeyName>request_id</includeMdcKeyName>
+      <includeMdcKeyName>user_id</includeMdcKeyName>
+      <includeMdcKeyName>show_id</includeMdcKeyName>
+      <includeMdcKeyName>idempotency_key</includeMdcKeyName>
+      <includeMdcKeyName>outcome</includeMdcKeyName>
+    </encoder>
+  </appender>
+
   <root level="${LOG_LEVEL:-INFO}">
     <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="FILE"/>
   </root>
 </configuration>
