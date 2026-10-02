@@ -30,7 +30,7 @@ public class ShowEntity {
 	private int totalSeats;
 
 	@Column(name = "created_at", nullable = false, updatable = false)
-	private Instant createdAt;
+	private Instant createdAt = Instant.now();
 
 	protected ShowEntity() {
 	}

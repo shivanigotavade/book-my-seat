@@ -162,6 +162,7 @@ UI, real payment processing, notifications, multi-region, seat maps/pricing tier
 - [ ] Index `seats (show_id, status)` for counts; index `reservations (user_id)`.
 - [ ] Money columns are `BIGINT` only.
 - [ ] Seed insertion done via batched/`unnest` insert so a 50k-seat show creates quickly.
+- [ ] JPA entities initialize every DB-defaulted column (e.g. `created_at`) in Java: Hibernate inserts explicit `NULL`s, which override column defaults — relying on `DEFAULT now()` works for native SQL only.
 
 **Acceptance:** Flyway applies cleanly on an empty DB; manually attempting to double-confirm a seat via SQL is rejected by a constraint.
 

@@ -29,7 +29,7 @@ public class ReservationEntity {
 	private long amountPaise;
 
 	@Column(name = "created_at", nullable = false, updatable = false)
-	private Instant createdAt;
+	private Instant createdAt = Instant.now();
 
 	@Column(name = "cancelled_at")
 	private Instant cancelledAt;
