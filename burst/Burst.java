@@ -33,6 +33,7 @@ public class Burst {
     static Cfg cfg;
     static HttpClient client;
     static final List<Long> latencies = Collections.synchronizedList(new ArrayList<>());
+    static final Map<String, AtomicInteger> netErrors = new ConcurrentHashMap<>();
     static final List<String> failures = Collections.synchronizedList(new ArrayList<>());
     static final AtomicLong client201s = new AtomicLong();
     static final Set<String> confirmedSeats = ConcurrentHashMap.newKeySet();
@@ -171,6 +172,7 @@ public class Burst {
         long stampSecs = Math.max(1, TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - stampStart));
         check(count(stampCodes, "5xx") == 0, "zero 5xx across stampede");
         check(count(stampCodes, "NET") == 0, "zero network errors");
+        printCodes("stampede", stampCodes);
 
         System.out.println("== idempotent retries x" + cfg.idemRetries() + " ==");
         String idemToken = token("idem-u");
@@ -491,6 +493,10 @@ public class Burst {
         } catch (Exception e) {
             long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
             latencies.add(ms);
+            String detail = String.valueOf(e.getMessage());
+            String kind = e.getClass().getSimpleName() + ": "
+                    + detail.substring(0, Math.min(80, detail.length()));
+            netErrors.computeIfAbsent(kind, k -> new AtomicInteger()).incrementAndGet();
             return new Resp(-1, "", null, ms, e.toString());
         }
     }
@@ -591,6 +597,10 @@ public class Burst {
     }
 
     static void printReport(long stampSecs) {
+        if (!netErrors.isEmpty()) {
+            System.out.println("== transport errors by cause ==");
+            netErrors.forEach((k, v) -> System.out.println("  net error x" + v + "  " + k));
+        }
         List<Long> sorted;
         synchronized (latencies) {
             sorted = new ArrayList<>(latencies);

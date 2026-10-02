@@ -471,7 +471,7 @@ Entry points: `make burst BASE_URL=https://…` and `./burst.sh <BASE_URL>` (wra
 | 9 | **Reconciliation:** `GET /shows/{id}` + `/metrics` | `available+held+confirmed == total`; metrics match client tallies |
 
 **Output**
-- [ ] Outcome distribution table: confirmed / declined by reason / replays / 4xx other / **5xx** / network errors.
+- [ ] Outcome distribution table: confirmed / declined by reason / replays / 4xx other / **5xx** / network errors — printed per phase (`[storm]`, `[stampede]`) plus transport errors broken down by exception cause.
 - [ ] Latency percentiles (p50/p95/p99) and throughput.
 - [ ] Per-hot-seat winner check; final invariant check; metrics-vs-API reconciliation.
 - [ ] Clear `PASS`/`FAIL` per check and a **non-zero exit code** on any failure.
