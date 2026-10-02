@@ -25,6 +25,7 @@ Collection file: [`book-my-seat.postman_collection.json`](book-my-seat.postman_c
 | 2b | `POST /auth/token` (admin bootstrap) | bootstrap secret bearer | `{"user_id":"ops","role":"ADMIN"}` | `200` ADMIN JWT → `adminJwt`; wrong secret → `401` |
 | 3 | `POST /shows` | admin bearer | name + `["A1".."A5"]` + `price_paise` | `201` → `showId` |
 | 4 | `POST /shows` as USER | user bearer | same shape | `403 FORBIDDEN` |
+| 4b | `POST /shows` as ADMIN JWT | `{{adminJwt}}` bearer | same shape, fresh show | `201`, moves `showId` to the new show |
 | 5 | `GET /shows/{id}` | none | — | `200`, counts sum to total |
 | 6 | `GET /shows/{id}?summary=true` | none | — | `200`, no `seats` key |
 | 7 | `POST /shows/{id}/reserve` | alice | `A1`, key `postman-1` | `201`, owner alice → `reservationId` |

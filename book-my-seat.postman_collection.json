@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b00kmys3at-c0ll-ection0001",
     "name": "Book My Seat",
-    "description": "Seat-reservation system of record. Run folders top to bottom; test scripts chain baseUrl, tokens, showId and reservationId automatically.",
+    "description": "Seat-reservation system of record. Run folders top to bottom; test scripts chain baseUrl, tokens, showId and reservationId automatically. Secrets: JWT_SECRET never leaves the server (signing key); adminToken is the operator-shared bootstrap secret (direct bearer, or exchanged for a short-lived ADMIN JWT stored in adminJwt).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -144,6 +144,35 @@
                 "exec": [
                   "pm.test(\"status is 403\", function () { pm.response.to.have.status(403); });",
                   "pm.test(\"code is FORBIDDEN\", function () { pm.expect(pm.response.json().error.code).to.eql(\"FORBIDDEN\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create show (ADMIN JWT)",
+          "description": "Same route via the minted ADMIN JWT instead of the static secret — proves bootstrap issuance end to end. Creates its own show and moves showId to it.",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminJwt}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Rock Night JWT\",\"seats\":[\"A1\",\"A2\",\"A3\",\"A4\",\"A5\"],\"price_paise\":25000}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/shows"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"showId\", pm.response.json().id);"
                 ]
               }
             }
