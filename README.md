@@ -6,8 +6,8 @@ the same seat in the same second.
 
 Java 21 · Spring Boot 3.5 · PostgreSQL 16 · Flyway · Docker
 
-> Live URL: TBD — deploy via `render.yaml` (one click from this repo), then
-> put the public base URL here. Everything below works against
+> Live URL: https://book-my-seat-7pdy.onrender.com — deployed from this
+> repo via `render.yaml`. Everything below works against
 > `http://localhost:8080` today and against the live URL unchanged.
 
 ## Quick start (only Docker needed)
