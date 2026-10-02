@@ -101,9 +101,18 @@ public class Burst {
             try {
                 stormGate.acquire();
                 try {
-                    Resp r = call("POST", "/shows/" + showId + "/reserve", hotTokens.get(i),
+                    Resp r = callWithRetry("POST", "/shows/" + showId + "/reserve", hotTokens.get(i),
                             "{\"seats\":[\"" + cfg.hotSeat() + "\"],\"idempotency_key\":\"storm-" + i + "\"}");
-                    tally(r, stormCodes, List.of(cfg.hotSeat()), stormWinners);
+                    if (r.status() == 200 && "true".equals(r.replayed())) {
+                        String id = str(r.body(), "reservation_id");
+                        if (id != null) {
+                            stormWinners.add(id);
+                        }
+                        stormCodes.computeIfAbsent("200:replay-resolved", k -> new AtomicInteger())
+                                .incrementAndGet();
+                    } else {
+                        tally(r, stormCodes, List.of(cfg.hotSeat()), stormWinners);
+                    }
                 } finally {
                     stormGate.release();
                 }
@@ -113,8 +122,12 @@ public class Burst {
             }
         });
         printCodes("storm", stormCodes);
-        check(count(stormCodes, "201") == 1, "hot seat has exactly one 201");
-        check(count(stormCodes, "409:SEAT_TAKEN") == cfg.hotUsers() - 1, "losers get 409 SEAT_TAKEN");
+        check(count(stormCodes, "201") + count(stormCodes, "200:replay-resolved") >= 1,
+                "hot seat has a winner");
+        check(count(stormCodes, "NET") == 0, "zero storm network errors");
+        check(count(stormCodes, "409:SEAT_TAKEN") == cfg.hotUsers()
+                - count(stormCodes, "201") - count(stormCodes, "200:replay-resolved"),
+                "losers get 409 SEAT_TAKEN");
         check(stormWinners.size() == 1, "single winning reservation");
 
         System.out.println("== on-sale stampede: " + cfg.stampedeRequests() + " requests ==");
@@ -144,7 +157,7 @@ public class Burst {
             try {
                 inFlight.acquire();
                 try {
-                    r = call("POST", "/shows/" + showId + "/reserve", stampedeTokens.get(user),
+                    r = callWithRetry("POST", "/shows/" + showId + "/reserve", stampedeTokens.get(user),
                             body.replace("\"idempotency_key\":\"K\"", "\"idempotency_key\":\"" + key + "\""));
                 } finally {
                     inFlight.release();
@@ -164,7 +177,7 @@ public class Burst {
         var seenIds = ConcurrentHashMap.<String>newKeySet();
         var replayCodes = new ConcurrentHashMap<String, AtomicInteger>();
         runParallel(cfg.idemRetries(), i -> {
-            Resp r = call("POST", "/shows/" + showId + "/reserve", idemToken,
+            Resp r = callWithRetry("POST", "/shows/" + showId + "/reserve", idemToken,
                     "{\"seats\":[\"IDEM1\"],\"idempotency_key\":\"idem-1\"}");
             if (r.status() == 201) {
                 tally(r, replayCodes, List.of("IDEM1"), ConcurrentHashMap.newKeySet());
@@ -196,7 +209,7 @@ public class Burst {
         String limitToken = token("limit-u");
         var limitCodes = new ConcurrentHashMap<String, AtomicInteger>();
         runParallel(10, i -> {
-            Resp r = call("POST", "/shows/" + showId + "/reserve", limitToken,
+            Resp r = callWithRetry("POST", "/shows/" + showId + "/reserve", limitToken,
                     "{\"seats\":[\"LIMIT" + i + "\"],\"idempotency_key\":\"lim-" + i + "\"}");
             tally(r, limitCodes, List.of("LIMIT" + i), ConcurrentHashMap.newKeySet());
         });
@@ -205,7 +218,7 @@ public class Burst {
 
         System.out.println("== spoofed identity ==");
         String spoofToken = token("spoof-u");
-        Resp spoof = call("POST", "/shows/" + showId + "/reserve", spoofToken,
+        Resp spoof = callWithRetry("POST", "/shows/" + showId + "/reserve", spoofToken,
                 "{\"seats\":[\"SPOOF1\"],\"idempotency_key\":\"spoof-1\",\"user_id\":\"mallory\"}");
         if (spoof.status() == 201) {
             tally(spoof, new ConcurrentHashMap<>(), List.of("SPOOF1"), ConcurrentHashMap.newKeySet());
@@ -216,18 +229,18 @@ public class Burst {
         System.out.println("== cancel authorisation ==");
         String canceller = token("cancel-u");
         String other = token("cancel-other");
-        Resp booked = call("POST", "/shows/" + showId + "/reserve", canceller,
+        Resp booked = callWithRetry("POST", "/shows/" + showId + "/reserve", canceller,
                 "{\"seats\":[\"CANCEL1\"],\"idempotency_key\":\"cancel-1\"}");
         if (booked.status() == 201) {
             tally(booked, new ConcurrentHashMap<>(), List.of("CANCEL1"), ConcurrentHashMap.newKeySet());
         }
         String cancelId = str(booked.body(), "reservation_id");
         check(booked.status() == 201 && cancelId != null, "cancel fixture booked");
-        Resp forbidden = call("POST", "/reservations/" + cancelId + "/cancel", other, "{}");
+        Resp forbidden = callWithRetry("POST", "/reservations/" + cancelId + "/cancel", other, "{}");
         check(forbidden.status() == 403, "non-owner cancel is 403");
-        Resp cancelled = call("POST", "/reservations/" + cancelId + "/cancel", canceller, "{}");
+        Resp cancelled = callWithRetry("POST", "/reservations/" + cancelId + "/cancel", canceller, "{}");
         check(cancelled.status() == 200, "owner cancel is 200");
-        Resp rebook = call("POST", "/shows/" + showId + "/reserve", other,
+        Resp rebook = callWithRetry("POST", "/shows/" + showId + "/reserve", other,
                 "{\"seats\":[\"CANCEL1\"],\"idempotency_key\":\"cancel-2\"}");
         if (rebook.status() == 201) {
             // Counted but not seat-tracked: CANCEL1 was legitimately freed by
@@ -237,7 +250,7 @@ public class Burst {
         check(rebook.status() == 201, "seat re-bookable after cancel");
 
         System.out.println("== reconciliation ==");
-        Resp summary = call("GET", "/shows/" + showId + "?summary=true", null, null);
+        Resp summary = callWithRetry("GET", "/shows/" + showId + "?summary=true", null, null);
         long available = num(summary.body(), "available");
         long held = num(summary.body(), "held");
         long confirmed = num(summary.body(), "confirmed");
@@ -435,7 +448,7 @@ public class Burst {
 
     static Map<String, Double> scrapeMetrics() {
         try {
-            Resp r = call("GET", "/metrics", null, null);
+            Resp r = callWithRetry("GET", "/metrics", null, null);
             Map<String, Double> out = new ConcurrentHashMap<>();
             for (String line : r.body().split("\n")) {
                 if (line.startsWith("#") || line.isBlank()) {
@@ -480,6 +493,28 @@ public class Burst {
             latencies.add(ms);
             return new Resp(-1, "", null, ms, e.toString());
         }
+    }
+
+    /**
+     * Same key + same body retried: safe by idempotency (a lost response to a
+     * committed attempt replays instead of double-booking) and safe for GETs
+     * and owner-scoped cancels. Only transport failures retry — 4xx/5xx stand.
+     */
+    static Resp callWithRetry(String method, String path, String token, String body) {
+        Resp r = null;
+        for (int i = 1; i <= 3; i++) {
+            r = call(method, path, token, body);
+            if (r.netError() == null) {
+                return r;
+            }
+            try {
+                Thread.sleep(1000L * i);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return r;
+            }
+        }
+        return r;
     }
 
     static String str(String json, String key) {
