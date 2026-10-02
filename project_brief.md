@@ -414,7 +414,7 @@ Exposed at `GET /metrics` (Prometheus text format).
 **Objective:** Trace any request end to end; show the system behaving under load.
 
 - [ ] JSON logs to stdout via `logstash-logback-encoder`.
-- [ ] Same JSON lines appended to `${LOG_PATH}/book-my-seat-api.log` (default `target/logs/`, rolling 100MB/30d) for local run capture; `LOG_PATH` overrides per run.
+- [ ] Same JSON lines appended to `${LOG_PATH}/book-my-seat-api.log` (default `target/logs/`, rolling 100MB/30d) for local run capture; `LOG_PATH` overrides per run; disabled under the `prod` profile (containers log to stdout).
 - [ ] Servlet filter sets `request_id` (from `X-Request-Id` if supplied, else generated UUID), puts it in MDC, and echoes it in the response header and error bodies.
 - [ ] MDC also carries `user_id`, `show_id`, `idempotency_key` (hashed/truncated), `outcome`.
 - [ ] One concise log line per reservation decision: `reservation.confirmed`, `reservation.declined reason=seat-taken`, `reservation.replayed`, `reservation.cancelled`.

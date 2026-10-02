@@ -14,7 +14,9 @@
 
   <!-- Local run capture: same JSON lines appended to
        ${LOG_PATH}/book-my-seat-api.log (default target/logs/, git-ignored;
-       wiped by mvn clean, so copy captures out before rebuilding). -->
+       wiped by mvn clean, so copy captures out before rebuilding).
+       Prod profile disables it: containers log to stdout for the platform. -->
+  <springProfile name="!prod">
   <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
     <file>${LOG_PATH:-target/logs}/book-my-seat-api.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
@@ -31,9 +33,10 @@
       <includeMdcKeyName>outcome</includeMdcKeyName>
     </encoder>
   </appender>
+  </springProfile>
 
   <root level="${LOG_LEVEL:-INFO}">
     <appender-ref ref="CONSOLE"/>
-    <appender-ref ref="FILE"/>
+    <springProfile name="!prod"><appender-ref ref="FILE"/></springProfile>
   </root>
 </configuration>
