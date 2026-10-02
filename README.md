@@ -30,8 +30,8 @@ integration tests need Docker and skip otherwise).
 | Var | Default (local) | Meaning |
 |-----|-----------------|---------|
 | `PORT` | `8080` | HTTP port (injected by PaaS — never hardcode in deploy) |
-| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/bookmyseat` | JDBC URL, or provider `postgres://…` form (auto-converted) |
-| `DB_USER` / `DB_PASSWORD` | `bookmyseat` | DB credentials (ignored when `DATABASE_URL` embeds them) |
+| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/book_my_seat` | JDBC URL, or provider `postgres://…` form (auto-converted) |
+| `DB_USER` / `DB_PASSWORD` | `postgres` / `root` | Local-dev defaults; always set explicitly via env in compose/deploy (ignored when `DATABASE_URL` embeds them) |
 | `JWT_SECRET` | dev default | HS256 secret, ≥ 32 bytes |
 | `ADMIN_TOKEN` | `dev-admin-token` | Static admin bearer for `POST /shows` |
 | `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` | `true` | Set `false` in prod to disable `POST /auth/token` |
