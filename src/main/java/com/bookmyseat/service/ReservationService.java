@@ -139,8 +139,8 @@ public class ReservationService {
 		// transaction blocks on this row until the first commits or aborts, so
 		// there is no window for a double reserve. A declined first attempt
 		// rolls back and frees the key.
-		if (keys.insertIgnore(caller.userId(), idempotencyKey, requestHash) == 0) {
-			return replay(caller.userId(), idempotencyKey, requestHash);
+		if (keys.insertIgnore(caller.userId(), showId, idempotencyKey, requestHash) == 0) {
+			return replay(caller.userId(), showId, idempotencyKey, requestHash);
 		}
 
 		ShowEntity show = shows.findById(showId)
@@ -199,7 +199,7 @@ public class ReservationService {
 
 		seatRows.saveAll(labels.stream().map(label -> new ReservationSeatEntity(reservationId, showId, label))
 				.toList());
-		keys.linkReservation(caller.userId(), idempotencyKey, reservationId);
+		keys.linkReservation(caller.userId(), showId, idempotencyKey, reservationId);
 
 		return new ReserveOutcome(new ReserveResponse(reservationId, showId, caller.userId(),
 				new ArrayList<>(labels), amount, "confirmed"), false);
@@ -209,12 +209,12 @@ public class ReservationService {
 	 * Same key seen before: mismatched fingerprint → 409, otherwise the stored
 	 * reservation with no seat, quota or counter movement.
 	 */
-	private ReserveOutcome replay(String userId, String idempotencyKey, String requestHash) {
-		var stored = keys.findByUserIdAndIdempotencyKey(userId, idempotencyKey);
+	private ReserveOutcome replay(String userId, UUID showId, String idempotencyKey, String requestHash) {
+		var stored = keys.findByUserIdAndShowIdAndIdempotencyKey(userId, showId, idempotencyKey);
 		if (stored.isEmpty()) {
 			// Defensive: the conflicting row vanished (first attempt aborted
 			// after we observed the conflict). Re-insert and proceed as first-timer.
-			keys.insertIgnore(userId, idempotencyKey, requestHash);
+			keys.insertIgnore(userId, showId, idempotencyKey, requestHash);
 			throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "RETRY_LATER",
 					"Concurrent reservation in progress; retry with the same key.");
 		}

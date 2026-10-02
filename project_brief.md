@@ -81,7 +81,7 @@ The service is judged on the **running system**, not the write-up: the reviewers
 | Multi-seat requests | **All-or-nothing** | Simple to reason about, easy to hold under concurrency, no partially-granted surprises. |
 | Atomic mechanism | **Row locks in deterministic (sorted) order + guarded `UPDATE … WHERE status='available'`**, with DB constraints as a safety net | Race-free by construction; sorted lock order prevents deadlock on multi-seat. |
 | Per-user limit mechanism | **Conditional counter update** on a `(user_id, show_id)` quota row | Serialises parallel requests from the same user without locking seats. |
-| Idempotency scope | Key is **scoped per user**; request fingerprint = hash of `(show_id, sorted seats)` | Prevents one user's key colliding with another's; detects same-key-different-body. |
+| Idempotency scope | Key is **scoped per user and show**; request fingerprint = hash of `(show_id, sorted seats)` | Same key on different shows are independent operations; same-show reuse still detected. |
 | Idempotency storage | Postgres table with `UNIQUE (user_id, idempotency_key)`, written **in the same transaction** as the reservation | Exactly-once is enforced by the database, not by app memory. |
 | Declines & keys | A declined attempt rolls back and **does not consume** the key | Keeps the key table = "keys that produced a reservation"; retry after a decline is safe. |
 | Replay status code | **`200 OK`** with the original body + `Idempotent-Replayed: true` header | Keeps "exactly one `201` per hot seat" true even when the winner retries. |
@@ -132,6 +132,7 @@ UI, real payment processing, notifications, multi-region, seat maps/pricing tier
 | G27 | Postman collection & brief | Importable requests + request catalogue |
 | G28 | Rolling file log capture | Same JSON lines in `target/logs/` for local runs |
 | G29 | Live-burst hardening fixes | Timestamp defaults, flush ordering before guarded writes |
+| G30 | Per-show idempotency scope | Same key on different shows are independent operations |
 
 ---
 
@@ -269,9 +270,9 @@ UI, real payment processing, notifications, multi-region, seat maps/pricing tier
 - [ ] Key source: `Idempotency-Key` header or `idempotency_key` body field; validated (length ≤ 128, printable).
 - [ ] First statement in the transaction:
   ```sql
-  INSERT INTO idempotency_keys(user_id, idempotency_key, request_hash)
-  VALUES (:uid, :key, :hash)
-  ON CONFLICT (user_id, idempotency_key) DO NOTHING;
+  INSERT INTO idempotency_keys(user_id, show_id, idempotency_key, request_hash)
+  VALUES (:uid, :show, :key, :hash)
+  ON CONFLICT (user_id, show_id, idempotency_key) DO NOTHING;
   ```
   - **1 row inserted** → first time; continue.
   - **0 rows** → key exists (a concurrent same-key transaction blocks here until the first one commits or aborts, so there is no window for a double reserve). Load the row:
@@ -760,3 +761,16 @@ immediately — the FK safety net caught it as a loud `23503`, never silent
 corruption).
 
 **Acceptance:** `./burst.sh` against the live URL prints all-green.
+
+### G30 — Per-show idempotency scope
+Global `(user_id, key)` scoping plus a `show_id`-bound hash meant every
+rerun against a fresh show turned identical logical requests into `409
+IDEMPOTENCY_KEY_REUSED` — and made key-reusing ITs order-dependent.
+`V2__idempotency_show_scope.sql` re-keys to `(user_id, show_id,
+idempotency_key)` (backfilled from `reservations`, unlinked rows dropped);
+entity PK, repository methods and the three service touchpoints carry
+`show_id`. Same-show semantics unchanged; the hash still binds `show_id`
+as defence in depth.
+
+**Acceptance:** two consecutive all-green bursts on one database; key-reusing
+ITs pass in any order.

@@ -16,15 +16,16 @@ public interface IdempotencyKeyRepository extends JpaRepository<IdempotencyKeyEn
 	 * transaction blocks here until the first commits or aborts.
 	 */
 	@Modifying
-	@Query(value = "INSERT INTO idempotency_keys (user_id, idempotency_key, request_hash)"
-			+ " VALUES (:userId, :key, :hash) ON CONFLICT (user_id, idempotency_key) DO NOTHING",
+	@Query(value = "INSERT INTO idempotency_keys (user_id, show_id, idempotency_key, request_hash)"
+			+ " VALUES (:userId, :showId, :key, :hash)"
+			+ " ON CONFLICT (user_id, show_id, idempotency_key) DO NOTHING",
 			nativeQuery = true)
-	int insertIgnore(String userId, String key, String hash);
+	int insertIgnore(String userId, UUID showId, String key, String hash);
 
-	Optional<IdempotencyKeyEntity> findByUserIdAndIdempotencyKey(String userId, String key);
+	Optional<IdempotencyKeyEntity> findByUserIdAndShowIdAndIdempotencyKey(String userId, UUID showId, String key);
 
 	@Modifying
 	@Query(value = "UPDATE idempotency_keys SET reservation_id = :reservationId"
-			+ " WHERE user_id=:userId AND idempotency_key=:key", nativeQuery = true)
-	int linkReservation(String userId, String key, UUID reservationId);
+			+ " WHERE user_id=:userId AND show_id=:showId AND idempotency_key=:key", nativeQuery = true)
+	int linkReservation(String userId, UUID showId, String key, UUID reservationId);
 }

@@ -22,6 +22,10 @@ public class IdempotencyKeyEntity {
 	private String userId;
 
 	@Id
+	@Column(name = "show_id")
+	private UUID showId;
+
+	@Id
 	@Column(name = "idempotency_key")
 	private String idempotencyKey;
 
@@ -37,8 +41,9 @@ public class IdempotencyKeyEntity {
 	protected IdempotencyKeyEntity() {
 	}
 
-	public IdempotencyKeyEntity(String userId, String idempotencyKey, String requestHash) {
+	public IdempotencyKeyEntity(String userId, UUID showId, String idempotencyKey, String requestHash) {
 		this.userId = userId;
+		this.showId = showId;
 		this.idempotencyKey = idempotencyKey;
 		this.requestHash = requestHash;
 	}
@@ -58,6 +63,7 @@ public class IdempotencyKeyEntity {
 	public static class PK implements Serializable {
 
 		private String userId;
+		private UUID showId;
 		private String idempotencyKey;
 
 		public PK() {
@@ -68,12 +74,13 @@ public class IdempotencyKeyEntity {
 			if (!(o instanceof PK other)) {
 				return false;
 			}
-			return Objects.equals(userId, other.userId) && Objects.equals(idempotencyKey, other.idempotencyKey);
+			return Objects.equals(userId, other.userId) && Objects.equals(showId, other.showId)
+					&& Objects.equals(idempotencyKey, other.idempotencyKey);
 		}
 
 		@Override
 		public int hashCode() {
-			return Objects.hash(userId, idempotencyKey);
+			return Objects.hash(userId, showId, idempotencyKey);
 		}
 	}
 }
