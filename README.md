@@ -33,7 +33,7 @@ integration tests need Docker and skip otherwise).
 | `DATABASE_URL` | `jdbc:postgresql://localhost:5432/book_my_seat` | JDBC URL, or provider `postgres://…` form (auto-converted) |
 | `DB_USER` / `DB_PASSWORD` | `postgres` / `root` | Local-dev defaults; always set explicitly via env in compose/deploy (ignored when `DATABASE_URL` embeds them) |
 | `JWT_SECRET` | (none — required) | HS256 secret, ≥ 32 chars, random per deploy; never shared |
-| `ADMIN_TOKEN` | `dev-admin-token` | Static admin bearer for `POST /shows` (see Tokens) |
+| `ADMIN_TOKEN` | `dev-admin-token` (optional) | Static admin bearer for `POST /shows`; default works as-is, override per deploy (see Tokens) |
 | `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` | `true` | Set `false` in prod to disable `POST /auth/token` |
 | `JWT_EXPIRATION_SECONDS` | `86400` | Token lifetime |
 | `HIKARI_MAX_POOL_SIZE` / `HIKARI_MIN_IDLE` | `15` / `5` | Pool sizing (stay under the managed-PG connection cap) |
