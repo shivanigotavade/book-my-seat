@@ -32,8 +32,8 @@ integration tests need Docker and skip otherwise).
 | `PORT` | `8080` | HTTP port (injected by PaaS — never hardcode in deploy) |
 | `DATABASE_URL` | `jdbc:postgresql://localhost:5432/book_my_seat` | JDBC URL, or provider `postgres://…` form (auto-converted) |
 | `DB_USER` / `DB_PASSWORD` | `postgres` / `root` | Local-dev defaults; always set explicitly via env in compose/deploy (ignored when `DATABASE_URL` embeds them) |
-| `JWT_SECRET` | dev default | HS256 secret, ≥ 32 bytes |
-| `ADMIN_TOKEN` | `dev-admin-token` | Static admin bearer for `POST /shows` |
+| `JWT_SECRET` | (none — required) | HS256 secret, ≥ 32 chars, random per deploy; never shared |
+| `ADMIN_TOKEN` | `dev-admin-token` | Static admin bearer for `POST /shows` (see Tokens) |
 | `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` | `true` | Set `false` in prod to disable `POST /auth/token` |
 | `JWT_EXPIRATION_SECONDS` | `86400` | Token lifetime |
 | `HIKARI_MAX_POOL_SIZE` / `HIKARI_MIN_IDLE` | `15` / `5` | Pool sizing (stay under the managed-PG connection cap) |
@@ -50,6 +50,14 @@ curl -s -X POST localhost:8080/auth/token \
 # Admin calls use the static token:
 ADMIN="Authorization: Bearer dev-admin-token"
 ```
+
+> Deliberate take-home choice: `ADMIN_TOKEN` keeps its documented default
+> (`dev-admin-token`) on the live deployment so graders can create shows
+> with zero setup — run the burst the same way:
+> `ADMIN_TOKEN=dev-admin-token ./burst.sh <live-url>`. `JWT_SECRET` is
+> always a random per-deploy value (Render generates it); it is never
+> needed by callers. For a real production, generate both and distribute
+> the admin value out of band.
 
 ## API
 
