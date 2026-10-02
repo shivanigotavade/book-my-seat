@@ -98,24 +98,25 @@ public class Burst {
         System.out.println("== on-sale stampede: " + cfg.stampedeRequests() + " requests ==");
         List<String> stampedeTokens = fetchTokens("st-u-", cfg.stampedeUsers());
         var stampCodes = new ConcurrentHashMap<String, AtomicInteger>();
-        var lastKey = new ConcurrentHashMap<Integer, String>();
-        var lastBody = new ConcurrentHashMap<Integer, String>();
+        record LastReq(String key, String body) {
+        }
+        var lastReq = new ConcurrentHashMap<Integer, LastReq>();
         long stampStart = System.nanoTime();
         runParallel(cfg.stampedeRequests(), i -> {
             int user = i % cfg.stampedeUsers();
             String body;
             String key = "st-" + i;
-            if (i % 20 == 19 && lastKey.containsKey(user)) {
-                key = lastKey.get(user);
-                body = lastBody.get(user);
+            LastReq prev = lastReq.get(user);
+            if (i % 20 == 19 && prev != null) {
+                key = prev.key();
+                body = prev.body();
             } else {
                 body = stampedeBody(i);
-                lastKey.put(user, key);
-                lastBody.put(user, body);
+                lastReq.put(user, new LastReq(key, body));
             }
             Resp r = call("POST", "/shows/" + showId + "/reserve", stampedeTokens.get(user),
                     body.replace("\"idempotency_key\":\"K\"", "\"idempotency_key\":\"" + key + "\""));
-            tallyReplayAware(r, stampCodes, lastBody.get(user), ConcurrentHashMap.newKeySet());
+            tallyReplayAware(r, stampCodes, body, ConcurrentHashMap.newKeySet());
         });
         long stampSecs = Math.max(1, TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - stampStart));
         check(count(stampCodes, "5xx") == 0, "zero 5xx across stampede");
@@ -128,7 +129,13 @@ public class Burst {
         runParallel(cfg.idemRetries(), i -> {
             Resp r = call("POST", "/shows/" + showId + "/reserve", idemToken,
                     "{\"seats\":[\"IDEM1\"],\"idempotency_key\":\"idem-1\"}");
-            if (r.status() == 201 || (r.status() == 200 && "true".equals(r.replayed()))) {
+            if (r.status() == 201) {
+                tally(r, replayCodes, List.of("IDEM1"), ConcurrentHashMap.newKeySet());
+                String id = str(r.body(), "reservation_id");
+                if (id != null) {
+                    seenIds.add(id);
+                }
+            } else if (r.status() == 200 && "true".equals(r.replayed())) {
                 String id = str(r.body(), "reservation_id");
                 if (id != null) {
                     seenIds.add(id);
@@ -163,6 +170,9 @@ public class Burst {
         String spoofToken = token("spoof-u");
         Resp spoof = call("POST", "/shows/" + showId + "/reserve", spoofToken,
                 "{\"seats\":[\"SPOOF1\"],\"idempotency_key\":\"spoof-1\",\"user_id\":\"mallory\"}");
+        if (spoof.status() == 201) {
+            tally(spoof, new ConcurrentHashMap<>(), List.of("SPOOF1"), ConcurrentHashMap.newKeySet());
+        }
         check(spoof.status() == 201 && "spoof-u".equals(str(spoof.body(), "user_id")),
                 "reservation owned by token user, body user_id ignored");
 
@@ -171,6 +181,9 @@ public class Burst {
         String other = token("cancel-other");
         Resp booked = call("POST", "/shows/" + showId + "/reserve", canceller,
                 "{\"seats\":[\"CANCEL1\"],\"idempotency_key\":\"cancel-1\"}");
+        if (booked.status() == 201) {
+            tally(booked, new ConcurrentHashMap<>(), List.of("CANCEL1"), ConcurrentHashMap.newKeySet());
+        }
         String cancelId = str(booked.body(), "reservation_id");
         check(booked.status() == 201 && cancelId != null, "cancel fixture booked");
         Resp forbidden = call("POST", "/reservations/" + cancelId + "/cancel", other, "{}");
@@ -179,6 +192,11 @@ public class Burst {
         check(cancelled.status() == 200, "owner cancel is 200");
         Resp rebook = call("POST", "/shows/" + showId + "/reserve", other,
                 "{\"seats\":[\"CANCEL1\"],\"idempotency_key\":\"cancel-2\"}");
+        if (rebook.status() == 201) {
+            // Counted but not seat-tracked: CANCEL1 was legitimately freed by
+            // the cancel above, so re-confirming it is not a double-sell.
+            client201s.incrementAndGet();
+        }
         check(rebook.status() == 201, "seat re-bookable after cancel");
 
         System.out.println("== reconciliation ==");
