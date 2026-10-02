@@ -108,7 +108,7 @@ Error bodies are uniform: `{"error":{"code":"SEAT_TAKEN","message":"…",
 
 ```bash
 ./burst.sh http://localhost:8080
-make burst BASE_URL=https://<your-live-url>
+make burst BASE_URL=https://book-my-seat-7pdy.onrender.com
 ```
 
 Needs only Java 21. Runs the hot-seat storm (500 × `A12`), a ~20k-request
