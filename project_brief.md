@@ -89,7 +89,7 @@ The service is judged on the **running system**, not the write-up: the reviewers
 | Quota semantics | Counts seats in `held` or `confirmed` state; cancelling decrements | Matches "cannot hold more than N seats". |
 
 ### 3.2 Assumptions to state in the README
-- **Token acquisition for reviewers:** the brief says identity comes from a token but does not say how reviewers obtain one. Provide a documented, env-flagged `POST /auth/token` (`{"user_id":"u123"}` → USER JWT) for load testing, plus a pre-provisioned admin token. Document both clearly in the README and make the dev endpoint switchable via `AUTH_DEV_TOKEN_ENDPOINT_ENABLED`.
+- **Token acquisition for reviewers:** the brief says identity comes from a token but does not say how reviewers obtain one. Provide a documented, env-flagged `POST /auth/token` (`{"user_id":"u123"}` → USER JWT) for load testing, plus bootstrap-gated ADMIN issuance on the same endpoint (`{"user_id":"ops","role":"ADMIN"}` with the `ADMIN_TOKEN` secret as bearer → ADMIN JWT) and direct static-token auth as fallback. Document all clearly in the README and make open issuance switchable via `AUTH_DEV_TOKEN_ENDPOINT_ENABLED`.
 - `per_user_limit` is a per-show setting, default `4`, overridable on show creation.
 - A show has up to ~50,000 seats; seat labels are unique strings per show.
 
@@ -174,7 +174,7 @@ UI, real payment processing, notifications, multi-region, seat maps/pricing tier
 - [ ] Spring Security filter chain: `/health/**`, `/metrics`, `/auth/token` public; `POST /shows` requires `ADMIN`; reserve/cancel require authenticated `USER`; `GET /shows/{id}` public or authenticated (document the choice).
 - [ ] Controllers read the user id **only** from `SecurityContext` / `Authentication` principal.
 - [ ] Any `user_id` field in a request body is ignored (and never bound to the DTO).
-- [ ] Dev token endpoint `POST /auth/token` gated by `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` — issues USER tokens for load testing.
+- [ ] Token endpoint `POST /auth/token` gated by `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` — issues USER tokens for load testing; `role: ADMIN` additionally requires the bootstrap `ADMIN_TOKEN` secret and mints short-lived ADMIN JWTs.
 - [ ] `401` for missing/invalid token, `403` for insufficient role.
 
 **Acceptance:** A request with token for `alice` and body `{"user_id":"bob", ...}` produces a reservation owned by `alice`.
@@ -533,7 +533,7 @@ Entry points: `make burst BASE_URL=https://…` and `./burst.sh <BASE_URL>` (wra
 
 | Method & Path | Auth | Success | Notable failures |
 |---------------|------|---------|------------------|
-| `POST /auth/token` *(dev, flagged)* | public | `200 { token }` | `404` when disabled |
+| `POST /auth/token` *(flagged)* | public | `200 { token }` | `404` when disabled (USER); `401` without bootstrap secret (ADMIN) |
 | `POST /shows` | ADMIN | `201` show + seats | `400`, `401`, `403` |
 | `GET /shows/{id}` | public/auth | `200` state + counts | `404` |
 | `POST /shows/{id}/reserve` | USER | `201` new / `200` replay | `400`, `401`, `404`, `409` (`SEAT_TAKEN`, `PER_USER_LIMIT`, `IDEMPOTENCY_KEY_REUSED`), `429` |
@@ -610,7 +610,7 @@ book-my-seat/
     │   │   ├── service/           # application services (show, reserve, auth, health)
     │   │   ├── entity/            # JPA entities (all tables)
     │   │   ├── repository/        # Spring Data repositories (native SQL on hot paths)
-    │   │   ├── security/          # JWT filter, token service, dev token controller
+    │   │   ├── security/          # JWT filter, token service, auth controller
     │   │   ├── show/              # controller, service, DTOs
     │   │   ├── reservation/       # controller, service (atomic core), DTOs
     │   │   ├── idempotency/       # request hashing

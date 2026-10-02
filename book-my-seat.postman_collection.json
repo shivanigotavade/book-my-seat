@@ -8,6 +8,7 @@
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:8080" },
     { "key": "adminToken", "value": "dev-admin-token" },
+    { "key": "adminJwt", "value": "" },
     { "key": "userToken", "value": "" },
     { "key": "userToken2", "value": "" },
     { "key": "showId", "value": "" },
@@ -56,6 +57,32 @@
                 "exec": [
                   "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
                   "pm.collectionVariables.set(\"userToken2\", pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get ADMIN token (bootstrap secret)",
+          "description": "Mints a short-lived ADMIN JWT. Requires the server's ADMIN_TOKEN secret as bearer; the static secret also works directly on admin routes as fallback.",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"user_id\":\"ops\",\"role\":\"ADMIN\"}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/auth/token"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"role is ADMIN\", function () { pm.expect(pm.response.json().role).to.eql(\"ADMIN\"); });",
+                  "pm.collectionVariables.set(\"adminJwt\", pm.response.json().token);"
                 ]
               }
             }
