@@ -24,7 +24,7 @@ public class Burst {
 
     record Cfg(String base, String adminToken, int showSeats, int hotUsers, String hotSeat,
             int stampedeRequests, int hotSet, int stampedeUsers, int idemRetries, int stampedeConcurrency,
-            int setupConcurrency) {
+            int setupConcurrency, int stormConcurrency) {
     }
 
     record Resp(int status, String body, String replayed, long latencyMs, String netError) {
@@ -41,7 +41,7 @@ public class Burst {
         if (args.length > 0 && (args[0].equals("--help") || args[0].equals("-h"))) {
             System.out.println("usage: java burst/Burst.java <BASE_URL>");
             System.out.println("env: ADMIN_TOKEN SHOW_SEATS HOT_USERS HOT_SEAT STAMPEDE_REQUESTS "
-                    + "HOT_SET STAMPEDE_USERS IDEM_RETRIES STAMPEDE_CONCURRENCY SETUP_CONCURRENCY");
+                    + "HOT_SET STAMPEDE_USERS IDEM_RETRIES STAMPEDE_CONCURRENCY SETUP_CONCURRENCY STORM_CONCURRENCY");
             return;
         }
         if (args.length < 1) {
@@ -53,7 +53,7 @@ public class Burst {
                 envInt("HOT_USERS", 500), System.getenv().getOrDefault("HOT_SEAT", "A12"),
                 envInt("STAMPEDE_REQUESTS", 20000), envInt("HOT_SET", 10), envInt("STAMPEDE_USERS", 200),
                 envInt("IDEM_RETRIES", 30), envInt("STAMPEDE_CONCURRENCY", 1000),
-                envInt("SETUP_CONCURRENCY", 50));
+                envInt("SETUP_CONCURRENCY", 50), envInt("STORM_CONCURRENCY", 500));
         client = HttpClient.newBuilder()
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .connectTimeout(Duration.ofSeconds(10)).build();
@@ -96,11 +96,23 @@ public class Burst {
         List<String> hotTokens = fetchTokens("hot-u-", cfg.hotUsers());
         var stormCodes = new ConcurrentHashMap<String, AtomicInteger>();
         var stormWinners = ConcurrentHashMap.<String>newKeySet();
+        var stormGate = new java.util.concurrent.Semaphore(cfg.stormConcurrency());
         runParallel(cfg.hotUsers(), i -> {
-            Resp r = call("POST", "/shows/" + showId + "/reserve", hotTokens.get(i),
-                    "{\"seats\":[\"" + cfg.hotSeat() + "\"],\"idempotency_key\":\"storm-" + i + "\"}");
-            tally(r, stormCodes, List.of(cfg.hotSeat()), stormWinners);
+            try {
+                stormGate.acquire();
+                try {
+                    Resp r = call("POST", "/shows/" + showId + "/reserve", hotTokens.get(i),
+                            "{\"seats\":[\"" + cfg.hotSeat() + "\"],\"idempotency_key\":\"storm-" + i + "\"}");
+                    tally(r, stormCodes, List.of(cfg.hotSeat()), stormWinners);
+                } finally {
+                    stormGate.release();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
         });
+        printCodes("storm", stormCodes);
         check(count(stormCodes, "201") == 1, "hot seat has exactly one 201");
         check(count(stormCodes, "409:SEAT_TAKEN") == cfg.hotUsers() - 1, "losers get 409 SEAT_TAKEN");
         check(stormWinners.size() == 1, "single winning reservation");
@@ -533,6 +545,14 @@ public class Burst {
         } catch (Exception ex) {
             return -1;
         }
+    }
+
+    static void printCodes(String phase, Map<String, AtomicInteger> codes) {
+        var parts = new ArrayList<String>();
+        codes.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(e -> parts.add(e.getKey() + "=" + e.getValue()));
+        System.out.println("  [" + phase + "] " + String.join(" ", parts));
     }
 
     static void printReport(long stampSecs) {
