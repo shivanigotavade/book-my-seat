@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,7 +19,6 @@ import com.bookmyseat.common.TransactionRetry;
 import com.bookmyseat.entity.ReservationEntity;
 import com.bookmyseat.entity.ReservationSeatEntity;
 import com.bookmyseat.entity.SeatEntity;
-import com.bookmyseat.entity.ShowEntity;
 import com.bookmyseat.idempotency.RequestHasher;
 import com.bookmyseat.observability.ReservationMetrics;
 import com.bookmyseat.repository.IdempotencyKeyRepository;
@@ -83,6 +83,8 @@ public class ReservationService {
 	private final TransactionTemplate tx;
 	private final TransactionRetry retry;
 	private final ReservationMetrics metrics;
+	/** Show config is immutable after creation — cached, never invalidated. */
+	private final ConcurrentHashMap<UUID, ShowConfig> showCache = new ConcurrentHashMap<>();
 
 	public ReservationService(ShowRepository shows, SeatRepository seatRepository,
 			ReservationRepository reservations,
@@ -143,23 +145,23 @@ public class ReservationService {
 			return replay(caller.userId(), showId, idempotencyKey, requestHash);
 		}
 
-		ShowEntity show = shows.findById(showId)
-				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown show."));
-		long pricePaise = show.getPricePaise();
-		int perUserLimit = show.getPerUserLimit();
+		ShowConfig config = showCache.computeIfAbsent(showId, id -> shows.findById(id)
+				.map(s -> new ShowConfig(s.getPricePaise(), s.getPerUserLimit()))
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Unknown show.")));
+		long pricePaise = config.pricePaise();
+		int perUserLimit = config.perUserLimit();
 
 		if (labels.size() > perUserLimit) {
 			throw new ApiException(HttpStatus.CONFLICT, "PER_USER_LIMIT",
 					"Request exceeds per_user_limit of " + perUserLimit + ".");
 		}
-		// Quota gate (G6): the conditional UPDATE takes the quota row lock,
+		// Quota gate (G6): one conditional upsert takes the quota row lock,
 		// serialising parallel requests from the same user. It sits before the
 		// seat locks per the global order (quota → seats) and rolls back with
 		// the transaction when the seat step declines, so failed attempts
 		// consume nothing. Idempotent replays (G7) return before this point
 		// and never increment again.
-		quotas.upsertZero(caller.userId(), showId);
-		if (quotas.incrementIfFits(caller.userId(), showId, labels.size(), perUserLimit) == 0) {
+		if (quotas.upsertIncrementIfFits(caller.userId(), showId, labels.size(), perUserLimit) == 0) {
 			throw new ApiException(HttpStatus.CONFLICT, "PER_USER_LIMIT",
 					"Would exceed per_user_limit of " + perUserLimit + ".");
 		}
@@ -320,6 +322,9 @@ public class ReservationService {
 
 	/** Internal: lost a concurrent-cancel race; the attempt rolled back — re-read instead. */
 	private static final class CancelConflictException extends RuntimeException {
+	}
+
+	private record ShowConfig(long pricePaise, int perUserLimit) {
 	}
 
 	/**

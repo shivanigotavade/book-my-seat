@@ -133,6 +133,7 @@ UI, real payment processing, notifications, multi-region, seat maps/pricing tier
 | G28 | Rolling file log capture | Same JSON lines in `target/logs/` for local runs |
 | G29 | Live-burst hardening fixes | Timestamp defaults, flush ordering before guarded writes |
 | G30 | Per-show idempotency scope | Same key on different shows are independent operations |
+| G31 | Hot-path tuning | Same guarantees, fewer round trips per reserve |
 
 ---
 
@@ -774,3 +775,14 @@ as defence in depth.
 
 **Acceptance:** two consecutive all-green bursts on one database; key-reusing
 ITs pass in any order.
+
+### G31 — Hot-path tuning
+Same guarantees, fewer round trips: show config (`price`, `limit`,
+immutable after creation) cached in memory with no invalidation; quota
+upsert + conditional increment merged into one `INSERT … ON CONFLICT DO
+UPDATE … WHERE fits` (zero rows ⇒ `409`); Hibernate JDBC batching for
+multi-row inserts; pool sizing left env-driven per environment. Lock
+ordering, retry policy and logging untouched by design.
+
+**Acceptance:** full suite green; burst semantics all-green with improved
+uncontended p50 vs the G30 baseline.
