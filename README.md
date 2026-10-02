@@ -47,8 +47,15 @@ curl -s -X POST localhost:8080/auth/token \
   -H 'Content-Type: application/json' -d '{"user_id":"alice"}'
 # → {"token":"…","token_type":"Bearer","user_id":"alice","role":"USER","expires_in":86400}
 
-# Admin calls use the static token:
+# Admin calls use the static token (or a minted ADMIN JWT, below):
 ADMIN="Authorization: Bearer dev-admin-token"
+
+# Short-lived ADMIN JWT via the bootstrap secret:
+curl -s -X POST localhost:8080/auth/token \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer dev-admin-token' \
+  -d '{"user_id":"ops","role":"ADMIN"}'
+# → {"token":"…","role":"ADMIN",…} — use as bearer on admin routes.
 ```
 
 > Deliberate take-home choice: `ADMIN_TOKEN` keeps its documented default
@@ -110,7 +117,8 @@ stampede with replays, idempotency/limit/spoof/cancel checks, then
 (`confirmed_total` delta vs client `201`s). Prints PASS/FAIL per check and
 exits non-zero on failure. Tune via `SHOW_SEATS HOT_USERS STAMPEDE_REQUESTS
 HOT_SET STAMPEDE_USERS IDEM_RETRIES ADMIN_TOKEN` (plus `STAMPEDE_CONCURRENCY`,
-default 1000 in-flight — sustained pressure, not one instant socket pile-on).
+`STORM_CONCURRENCY`, `SETUP_CONCURRENCY` — sustained pressure metering, not
+one instant socket pile-on).
 
 ## Design decisions (summary)
 

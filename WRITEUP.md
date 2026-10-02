@@ -37,8 +37,10 @@ is decided under lock.
 ## Idempotency
 
 The key (body `idempotency_key` or `Idempotency-Key` header; differing both
-→ `400`) is scoped per user with `UNIQUE (user_id, idempotency_key)` and
-written **in the same transaction** as the reservation — exactly-once is
+→ `400`) is scoped per user **and show** with
+`UNIQUE (user_id, show_id, idempotency_key)` (re-keyed in G30: global scope
+turned every rerun on a fresh show into a false reuse conflict) and written
+**in the same transaction** as the reservation — exactly-once is
 enforced by the database, not app memory. The fingerprint is
 `SHA-256(show_id | sorted seats)` (`idempotency/RequestHasher`).
 
@@ -109,6 +111,18 @@ non-expiry) · payment step as hold → pay → confirm saga with compensation �
 per-user/IP rate limiting + virtual waiting room · seat categories / dynamic
 pricing in the amount calculation · sharded hot shows and Redis pre-filter ·
 read replicas for show state · outbox events for downstream consumers.
+
+## Performance notes (G31)
+
+Same guarantees, fewer round trips per reserve: immutable show config is
+cached in memory (no invalidation needed); quota upsert + conditional
+increment merged into one `INSERT … ON CONFLICT DO UPDATE … WHERE fits`
+(zero rows ⇒ `409`); Hibernate JDBC batching for multi-row writes; pool
+sizing left env-driven per environment. Lock ordering, retry policy and
+logging deliberately untouched. Burst client meters concurrency
+(`STAMPEDE/STORM/SETUP_CONCURRENCY`) and retries transport failures on
+idempotent-safe paths, so a 20k run measures sustained pressure, not socket
+pile-on.
 
 ## AI usage (G22 disclosure log)
 
