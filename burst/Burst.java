@@ -23,7 +23,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class Burst {
 
     record Cfg(String base, String adminToken, int showSeats, int hotUsers, String hotSeat,
-            int stampedeRequests, int hotSet, int stampedeUsers, int idemRetries, int stampedeConcurrency) {
+            int stampedeRequests, int hotSet, int stampedeUsers, int idemRetries, int stampedeConcurrency,
+            int setupConcurrency) {
     }
 
     record Resp(int status, String body, String replayed, long latencyMs, String netError) {
@@ -40,7 +41,7 @@ public class Burst {
         if (args.length > 0 && (args[0].equals("--help") || args[0].equals("-h"))) {
             System.out.println("usage: java burst/Burst.java <BASE_URL>");
             System.out.println("env: ADMIN_TOKEN SHOW_SEATS HOT_USERS HOT_SEAT STAMPEDE_REQUESTS "
-                    + "HOT_SET STAMPEDE_USERS IDEM_RETRIES STAMPEDE_CONCURRENCY");
+                    + "HOT_SET STAMPEDE_USERS IDEM_RETRIES STAMPEDE_CONCURRENCY SETUP_CONCURRENCY");
             return;
         }
         if (args.length < 1) {
@@ -51,13 +52,22 @@ public class Burst {
         cfg = new Cfg(base, env("ADMIN_TOKEN", "dev-admin-token"), envInt("SHOW_SEATS", 20000),
                 envInt("HOT_USERS", 500), System.getenv().getOrDefault("HOT_SEAT", "A12"),
                 envInt("STAMPEDE_REQUESTS", 20000), envInt("HOT_SET", 10), envInt("STAMPEDE_USERS", 200),
-                envInt("IDEM_RETRIES", 30), envInt("STAMPEDE_CONCURRENCY", 1000));
+                envInt("IDEM_RETRIES", 30), envInt("STAMPEDE_CONCURRENCY", 1000),
+                envInt("SETUP_CONCURRENCY", 50));
         client = HttpClient.newBuilder()
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .connectTimeout(Duration.ofSeconds(10)).build();
 
         System.out.println("== setup: readiness + admin show ==");
-        expect(ready(), "readiness is 200");
+        boolean up = false;
+        for (int i = 1; i <= 10 && !up; i++) {
+            up = ready();
+            if (!up) {
+                System.out.println("  waiting for readiness (" + i + "/10, cold start?) ...");
+                Thread.sleep(10000);
+            }
+        }
+        expect(up, "readiness is 200");
         Map<String, Double> metricsBefore = scrapeMetrics();
         List<String> labels = new ArrayList<>();
         for (int i = 0; i < cfg.showSeats(); i++) {
@@ -360,9 +370,18 @@ public class Burst {
 
     static List<String> fetchTokens(String prefix, int n) throws Exception {
         List<String> tokens = new ArrayList<>(Collections.nCopies(n, null));
+        var gate = new java.util.concurrent.Semaphore(cfg.setupConcurrency());
         runParallel(n, i -> {
             try {
-                tokens.set(i, token(prefix + i));
+                gate.acquire();
+                try {
+                    tokens.set(i, token(prefix + i));
+                } finally {
+                    gate.release();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -371,15 +390,26 @@ public class Burst {
     }
 
     static String token(String userId) throws Exception {
-        Resp r = call("POST", "/auth/token", null, "{\"user_id\":\"" + userId + "\"}");
-        if (r.status() != 200) {
-            throw new IllegalStateException("token for " + userId + " -> " + r.status() + " " + r.body());
+        Exception last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                Resp r = call("POST", "/auth/token", null, "{\"user_id\":\"" + userId + "\"}");
+                if (r.status() == 200) {
+                    String token = str(r.body(), "token");
+                    if (token != null) {
+                        return token;
+                    }
+                    last = new IllegalStateException("no token in: " + r.body());
+                } else {
+                    last = new IllegalStateException(
+                            "token for " + userId + " -> " + r.status() + " " + r.body());
+                }
+            } catch (Exception e) {
+                last = e;
+            }
+            Thread.sleep(2000L * attempt);
         }
-        String token = str(r.body(), "token");
-        if (token == null) {
-            throw new IllegalStateException("no token in: " + r.body());
-        }
-        return token;
+        throw new IllegalStateException("token for " + userId + " failed after retries", last);
     }
 
     static boolean ready() {
