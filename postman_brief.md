@@ -7,7 +7,7 @@ Collection file: [`book-my-seat.postman_collection.json`](book-my-seat.postman_c
 
 1. Postman → **Import** → select `book-my-seat.postman_collection.json`.
 2. Check the collection **Variables**: `baseUrl` defaults to
-   `http://localhost:8080` (live: `https://book-my-seat-7pdy.onrender.com`); `adminToken` defaults to `dev-admin-token`
+   `http://localhost:8080` (live: `https://book-my-seat-7pdy.onrender.com`); `adminToken` defaults to `admin-token`
    (must match the server's `ADMIN_TOKEN`). `adminJwt` is filled by the
    bootstrap request below. For the live deployment, change only `baseUrl`
    (and `adminToken` to the prod secret).

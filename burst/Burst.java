@@ -53,7 +53,7 @@ public class Burst {
             System.exit(2);
         }
         String base = args[0].endsWith("/") ? args[0].substring(0, args[0].length() - 1) : args[0];
-        cfg = new Cfg(base, env("ADMIN_TOKEN", "dev-admin-token"), envInt("SHOW_SEATS", 20000),
+        cfg = new Cfg(base, env("ADMIN_TOKEN", "admin-token"), envInt("SHOW_SEATS", 20000),
                 envInt("HOT_USERS", 500), System.getenv().getOrDefault("HOT_SEAT", "A12"),
                 envInt("STAMPEDE_REQUESTS", 20000), envInt("HOT_SET", 10), envInt("STAMPEDE_USERS", 200),
                 envInt("IDEM_RETRIES", 30), envInt("STAMPEDE_CONCURRENCY", 1000),

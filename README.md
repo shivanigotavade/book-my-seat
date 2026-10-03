@@ -33,7 +33,7 @@ integration tests need Docker and skip otherwise).
 | `DATABASE_URL` | `jdbc:postgresql://localhost:5432/book_my_seat` | JDBC URL, or provider `postgres://…` form (auto-converted) |
 | `DB_USER` / `DB_PASSWORD` | `postgres` / `root` | Local-dev defaults; always set explicitly via env in compose/deploy (ignored when `DATABASE_URL` embeds them) |
 | `JWT_SECRET` | (none — required) | HS256 secret, ≥ 32 chars, random per deploy; never shared |
-| `ADMIN_TOKEN` | `dev-admin-token` (optional) | Static admin bearer for `POST /shows`; default works as-is, override per deploy (see Tokens) |
+| `ADMIN_TOKEN` | `admin-token` (optional) | Static admin bearer for `POST /shows`; default works as-is, override per deploy (see Tokens) |
 | `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` | `true` | Set `false` in prod to disable `POST /auth/token` |
 | `JWT_EXPIRATION_SECONDS` | `86400` | Token lifetime |
 | `HIKARI_MAX_POOL_SIZE` / `HIKARI_MIN_IDLE` | `15` / `5` | Pool sizing (stay under the managed-PG connection cap) |
@@ -48,20 +48,20 @@ curl -s -X POST localhost:8080/auth/token \
 # → {"token":"…","token_type":"Bearer","user_id":"alice","role":"USER","expires_in":86400}
 
 # Admin calls use the static token (or a minted ADMIN JWT, below):
-ADMIN="Authorization: Bearer dev-admin-token"
+ADMIN="Authorization: Bearer admin-token"
 
 # Short-lived ADMIN JWT via the bootstrap secret:
 curl -s -X POST localhost:8080/auth/token \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer dev-admin-token' \
+  -H 'Authorization: Bearer admin-token' \
   -d '{"user_id":"ops","role":"ADMIN"}'
 # → {"token":"…","role":"ADMIN",…} — use as bearer on admin routes.
 ```
 
 > Deliberate take-home choice: `ADMIN_TOKEN` keeps its documented default
-> (`dev-admin-token`) on the live deployment so graders can create shows
+> (`admin-token`) on the live deployment so graders can create shows
 > with zero setup — run the burst the same way:
-> `ADMIN_TOKEN=dev-admin-token ./burst.sh <live-url>`. `JWT_SECRET` is
+> `ADMIN_TOKEN=admin-token ./burst.sh <live-url>`. `JWT_SECRET` is
 > always a random per-deploy value (Render generates it); it is never
 > needed by callers. For a real production, generate both and distribute
 > the admin value out of band.
@@ -70,7 +70,7 @@ curl -s -X POST localhost:8080/auth/token \
 
 ```bash
 BASE=localhost:8080
-ADMIN="Authorization: Bearer dev-admin-token"
+ADMIN="Authorization: Bearer admin-token"
 ALICE="Authorization: Bearer <alice-jwt>"
 
 # Create a show (ADMIN)
