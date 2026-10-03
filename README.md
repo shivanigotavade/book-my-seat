@@ -132,12 +132,12 @@ STAMPEDE_CONCURRENCY=50 STORM_CONCURRENCY=50 SETUP_CONCURRENCY=10 STAMPEDE_REQUE
 
 Observed (21,256 calls, 20k stampede + storm/replay/limit/spoof/cancel):
 
-| Env | Throughput | p50 | p95 | p99 | max |
-|-----|------------|-----|-----|-----|-----|
-| Local direct app, no Docker (`50/50/10`) | ~4251/s stampede | 14ms | 27ms | 49ms | 270ms |
-| Render free (metered 50/50/10) | ~49/s stampede | 998ms | 1899ms | 2590ms | 7088ms |
+| Env | Throughput | p50 | p95 | p99 | max | Full log |
+|-----|------------|-----|-----|-----|-----|----------|
+| Local direct app, no Docker (`50/50/10`) | ~4251/s stampede | 14ms | 27ms | 49ms | 270ms | [`burst_logs/local_stampede.txt`](burst_logs/local_stampede.txt) |
+| Render free (metered 50/50/10) | ~49/s stampede | 998ms | 1899ms | 2590ms | 7088ms | [`burst_logs/live_stampede.txt`](burst_logs/live_stampede.txt) |
 
-Live is slower by design (shared CPU/RAM, managed-PG cap, + cold start) — same `PASS`, longer wall time.
+Live is slower by design (shared CPU/RAM, managed-PG cap, + cold start) — same `PASS`, longer wall time. Both logs end `RESULT: PASS` with storm `201=1 409:SEAT_TAKEN=499`, `zero 5xx / zero network errors`, and `available + held + confirmed == total_seats`.
 
 ## Design decisions (summary)
 
