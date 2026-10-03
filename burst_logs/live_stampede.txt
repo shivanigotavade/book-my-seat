@@ -1,0 +1,137 @@
+$ STAMPEDE_REQUESTS=20000 STORM_CONCURRENCY=50 STAMPEDE_CONCURRENCY=50 ./burst.sh https://book-my-seat-7pdy.onrender.com
+== setup: readiness + admin show ==
+  PASS readiness is 200
+  ... 3 calls so far (0/s)
+  PASS setup show returns 201 (got 201)
+  PASS setup returns show id
+== hot-seat storm: 500 users x A12 ==
+  ... 400 calls so far (79/s)
+  ... 617 calls so far (43/s)
+  ... 784 calls so far (33/s)
+  ... 993 calls so far (41/s)
+  [storm] 201=1 409:SEAT_TAKEN=499
+  PASS hot seat has a winner
+  PASS zero storm network errors
+  PASS losers get 409 SEAT_TAKEN
+  PASS single winning reservation
+== on-sale stampede: 20000 requests ==
+  ... 1285 calls so far (58/s)
+  ... 1396 calls so far (22/s)
+  ... 1503 calls so far (21/s)
+  ... 1682 calls so far (35/s)
+  ... 1849 calls so far (33/s)
+  ... 1989 calls so far (28/s)
+  ... 2191 calls so far (40/s)
+  ... 2379 calls so far (37/s)
+  ... 2586 calls so far (41/s)
+  ... 2781 calls so far (39/s)
+  ... 2992 calls so far (42/s)
+  ... 3199 calls so far (41/s)
+  ... 3408 calls so far (41/s)
+  ... 3633 calls so far (45/s)
+  ... 3797 calls so far (32/s)
+  ... 4006 calls so far (41/s)
+  ... 4229 calls so far (44/s)
+  ... 4443 calls so far (42/s)
+  ... 4657 calls so far (42/s)
+  ... 4895 calls so far (47/s)
+  ... 5131 calls so far (47/s)
+  ... 5368 calls so far (47/s)
+  ... 5560 calls so far (38/s)
+  ... 5803 calls so far (48/s)
+  ... 6037 calls so far (46/s)
+  ... 6281 calls so far (48/s)
+  ... 6519 calls so far (47/s)
+  ... 6771 calls so far (50/s)
+  ... 7018 calls so far (49/s)
+  ... 7263 calls so far (49/s)
+  ... 7467 calls so far (40/s)
+  ... 7727 calls so far (52/s)
+  ... 7954 calls so far (45/s)
+  ... 8203 calls so far (49/s)
+  ... 8445 calls so far (48/s)
+  ... 8707 calls so far (52/s)
+  ... 8965 calls so far (51/s)
+  ... 9220 calls so far (51/s)
+  ... 9434 calls so far (42/s)
+  ... 9708 calls so far (54/s)
+  ... 9971 calls so far (52/s)
+  ... 10202 calls so far (46/s)
+  ... 10471 calls so far (53/s)
+  ... 10723 calls so far (50/s)
+  ... 10960 calls so far (47/s)
+  ... 11189 calls so far (45/s)
+  ... 11435 calls so far (49/s)
+  ... 11686 calls so far (50/s)
+  ... 11941 calls so far (51/s)
+  ... 12202 calls so far (52/s)
+  ... 12449 calls so far (49/s)
+  ... 12718 calls so far (53/s)
+  ... 12982 calls so far (52/s)
+  ... 13198 calls so far (43/s)
+  ... 13467 calls so far (53/s)
+  ... 13733 calls so far (53/s)
+  ... 14001 calls so far (53/s)
+  ... 14247 calls so far (49/s)
+  ... 14502 calls so far (51/s)
+  ... 14758 calls so far (51/s)
+  ... 15018 calls so far (52/s)
+  ... 15243 calls so far (45/s)
+  ... 15474 calls so far (46/s)
+  ... 15747 calls so far (54/s)
+  ... 16020 calls so far (54/s)
+  ... 16268 calls so far (49/s)
+  ... 16528 calls so far (52/s)
+  ... 16782 calls so far (50/s)
+  ... 17052 calls so far (54/s)
+  ... 17252 calls so far (40/s)
+  ... 17503 calls so far (50/s)
+  ... 17768 calls so far (53/s)
+  ... 18024 calls so far (51/s)
+  ... 18279 calls so far (51/s)
+  ... 18534 calls so far (51/s)
+  ... 18794 calls so far (52/s)
+  ... 19031 calls so far (47/s)
+  ... 19253 calls so far (44/s)
+  ... 19526 calls so far (54/s)
+  ... 19787 calls so far (52/s)
+  ... 20031 calls so far (48/s)
+  ... 20305 calls so far (54/s)
+  ... 20561 calls so far (51/s)
+  ... 20824 calls so far (52/s)
+  ... 21008 calls so far (36/s)
+  PASS zero 5xx across stampede
+  PASS zero network errors
+  [stampede] 200:replay=99 201=635 409:PER_USER_LIMIT=15964 409:SEAT_TAKEN=3302
+== idempotent retries x30 ==
+  ... 21234 calls so far (45/s)
+  PASS one reservation across retries
+  PASS retries replay with 200
+== same key, different seats ==
+  PASS same key + different body is 409 IDEMPOTENCY_KEY_REUSED
+== per-user limit: 10 parallel, limit 4 ==
+  PASS exactly 4 confirmed (got 4)
+  PASS rest declined PER_USER_LIMIT
+== spoofed identity ==
+  PASS reservation owned by token user, body user_id ignored
+== cancel authorisation ==
+  PASS cancel fixture booked
+  PASS non-owner cancel is 403
+  PASS owner cancel is 200
+  PASS seat re-bookable after cancel
+== reconciliation ==
+  PASS available + held + confirmed == total_seats (19245+0+769=20014)
+  ... 21256 calls so far (4/s)
+  PASS metric confirmed delta 644 == client 644
+  PASS metric seat-taken delta 3801 == client 3801
+  PASS metric per-user-limit delta 15970 == client 15970
+  PASS metric idempotent-replay delta 128 == client 128
+  PASS metric idempotency-key-reused delta 1 == client 1
+  PASS seats_available gauge delta 19245 == API available 19245
+  PASS seats_confirmed gauge delta 769 == API confirmed 769
+== outcome distribution ==
+  [reserve outcomes, all phases] confirmed=644 idempotency-key-reused=1 idempotent-replay=128 per-user-limit=15970 seat-taken=3801
+  client 201s: 644, distinct confirmed seats: 769
+== latency ms (n=21256, ~49/s stampede) ==
+  p50=998 p95=1899 p99=2590 max=7088
+RESULT: PASS

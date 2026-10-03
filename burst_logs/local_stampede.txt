@@ -1,0 +1,46 @@
+$ STAMPEDE_REQUESTS=20000 STORM_CONCURRENCY=50 STAMPEDE_CONCURRENCY=50 ./burst.sh http://localhost:8080
+== setup: readiness + admin show ==
+  PASS readiness is 200
+  PASS setup show returns 201 (got 201)
+  PASS setup returns show id
+== hot-seat storm: 500 users x A12 ==
+  [storm] 201=1 409:SEAT_TAKEN=499
+  PASS hot seat has a winner
+  PASS zero storm network errors
+  PASS losers get 409 SEAT_TAKEN
+  PASS single winning reservation
+== on-sale stampede: 20000 requests ==
+  ... 13245 calls so far (2649/s)
+  PASS zero 5xx across stampede
+  PASS zero network errors
+  [stampede] 200:replay=198 201=638 409:PER_USER_LIMIT=15949 409:SEAT_TAKEN=3215
+== idempotent retries x30 ==
+  PASS one reservation across retries
+  PASS retries replay with 200
+== same key, different seats ==
+  PASS same key + different body is 409 IDEMPOTENCY_KEY_REUSED
+== per-user limit: 10 parallel, limit 4 ==
+  PASS exactly 4 confirmed (got 4)
+  PASS rest declined PER_USER_LIMIT
+== spoofed identity ==
+  PASS reservation owned by token user, body user_id ignored
+== cancel authorisation ==
+  PASS cancel fixture booked
+  PASS non-owner cancel is 403
+  PASS owner cancel is 200
+  PASS seat re-bookable after cancel
+== reconciliation ==
+  PASS available + held + confirmed == total_seats (19244+0+770=20014)
+  PASS metric confirmed delta 647 == client 647
+  PASS metric seat-taken delta 3714 == client 3714
+  PASS metric per-user-limit delta 15955 == client 15955
+  PASS metric idempotent-replay delta 227 == client 227
+  PASS metric idempotency-key-reused delta 1 == client 1
+  PASS seats_available gauge delta 19244 == API available 19244
+  PASS seats_confirmed gauge delta 770 == API confirmed 770
+== outcome distribution ==
+  [reserve outcomes, all phases] confirmed=647 idempotency-key-reused=1 idempotent-replay=227 per-user-limit=15955 seat-taken=3714
+  client 201s: 647, distinct confirmed seats: 770
+== latency ms (n=21256, ~4251/s stampede) ==
+  p50=14 p95=27 p99=49 max=270
+RESULT: PASS
