@@ -26,7 +26,7 @@ import com.bookmyseat.exception.handler.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * G4 acceptance against real PostgreSQL 16: bulk creation is fast and the
+ * G4 acceptance against real PostgreSQL 18: bulk creation is fast and the
  * seat rows reconcile with the show. Skipped without Docker (CI runs it).
  */
 @SpringBootTest
@@ -35,7 +35,7 @@ class ShowServiceIT {
 
 	@Container
 	@org.springframework.boot.testcontainers.service.connection.ServiceConnection
-	static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine");
+	static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:18-alpine");
 
 	@Autowired
 	ShowService shows;

@@ -19,7 +19,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * G2 acceptance: Flyway applies cleanly on an empty DB and the database
  * itself rejects a double-confirm even if application logic is wrong.
  *
- * <p>Runs against real PostgreSQL 16 via Testcontainers. Skipped when Docker
+ * <p>Runs against real PostgreSQL 18 via Testcontainers. Skipped when Docker
  * is unavailable (local sandbox); CI with Docker executes it.
  */
 class SchemaInvariantIT {
@@ -36,7 +36,7 @@ class SchemaInvariantIT {
 	void flywayAppliesAndConstraintsRejectDoubleSell() throws Exception {
 		Assumptions.assumeTrue(dockerAvailable(), "Docker unavailable — skipping (CI runs this)");
 
-		try (PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine")) {
+		try (PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:18-alpine")) {
 			pg.start();
 
 			Flyway flyway = Flyway.configure()

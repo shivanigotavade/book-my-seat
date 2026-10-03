@@ -33,7 +33,7 @@ import com.bookmyseat.exception.handler.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * G5 acceptance against real PostgreSQL 16: one winner per hot seat, clean
+ * G5 acceptance against real PostgreSQL 18: one winner per hot seat, clean
  * 409s, no 5xx-shaped surprises (every decline is {@link ApiException}).
  * Skipped without Docker (CI runs it).
  */
@@ -43,7 +43,7 @@ class ReserveServiceIT {
 
 	@Container
 	@org.springframework.boot.testcontainers.service.connection.ServiceConnection
-	static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine");
+	static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:18-alpine");
 
 	@Autowired
 	ShowService shows;

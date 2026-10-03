@@ -4,7 +4,7 @@
 # retries connects, so cold starts survive a still-warming database.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: bookmyseat
       POSTGRES_PASSWORD: bookmyseat
