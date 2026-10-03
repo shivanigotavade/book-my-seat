@@ -29,10 +29,10 @@ import com.bookmyseat.repository.ShowRepository;
 import com.bookmyseat.repository.UserShowQuotaRepository;
 import com.bookmyseat.domain.CancelResponse;
 import com.bookmyseat.domain.ReserveOutcome;
-import com.bookmyseat.reservation.ReserveRequestValidator;
+import com.bookmyseat.validator.ReserveRequestValidator;
 import com.bookmyseat.domain.ReserveResponse;
 import com.bookmyseat.security.AuthPrincipal;
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.exception.handler.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**

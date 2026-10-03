@@ -17,9 +17,9 @@ import com.bookmyseat.repository.SeatRepository;
 import com.bookmyseat.repository.ShowRepository;
 import com.bookmyseat.domain.CreateShowRequest;
 import com.bookmyseat.domain.ShowDetailResponse;
-import com.bookmyseat.show.ShowRequestValidator;
+import com.bookmyseat.validator.ShowRequestValidator;
 import com.bookmyseat.domain.ShowResponse;
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.exception.handler.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**

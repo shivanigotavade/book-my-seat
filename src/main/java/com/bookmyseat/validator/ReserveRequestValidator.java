@@ -1,4 +1,4 @@
-package com.bookmyseat.reservation;
+package com.bookmyseat.validator;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -7,7 +7,7 @@ import java.util.Set;
 
 import org.springframework.http.HttpStatus;
 
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.exception.handler.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**

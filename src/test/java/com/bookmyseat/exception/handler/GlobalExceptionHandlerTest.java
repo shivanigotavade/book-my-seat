@@ -1,4 +1,4 @@
-package com.bookmyseat.web;
+package com.bookmyseat.exception.handler;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;

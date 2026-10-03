@@ -9,7 +9,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.validator.ShowRequestValidator;
+import com.bookmyseat.exception.handler.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;

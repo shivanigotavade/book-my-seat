@@ -26,7 +26,7 @@ import com.bookmyseat.domain.ShowResponse;
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.service.JwtService;
 import com.bookmyseat.service.ShowService;
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.exception.handler.ApiException;
 
 /**
  * DB-free slice: service is mocked, security chain is real. Proves the G4

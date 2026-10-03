@@ -9,7 +9,7 @@ import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.exception.handler.ApiException;
 
 /**
  * Bounded retry for transient contention (G8). Retries SQL states

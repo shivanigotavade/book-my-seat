@@ -1,4 +1,4 @@
-package com.bookmyseat.web;
+package com.bookmyseat.exception.handler;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

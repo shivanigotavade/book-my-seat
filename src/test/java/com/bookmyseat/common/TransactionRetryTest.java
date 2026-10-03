@@ -12,7 +12,7 @@ import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.exception.handler.ApiException;
 
 class TransactionRetryTest {
 

@@ -29,7 +29,7 @@ import com.bookmyseat.domain.ReserveResponse;
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.service.ReservationService;
 import com.bookmyseat.service.ShowService;
-import com.bookmyseat.web.ApiException;
+import com.bookmyseat.exception.handler.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**

@@ -1,6 +1,8 @@
-package com.bookmyseat.web;
+package com.bookmyseat.exception.handler;
 
 import org.springframework.http.HttpStatus;
+
+import com.bookmyseat.domain.ApiError;
 
 /** Domain failure mapped to a non-2xx {@link ApiError} by the global handler. */
 public class ApiException extends RuntimeException {
