@@ -4,7 +4,7 @@ Seat-reservation system of record built for on-sale stampedes. One seat is
 confirmed to exactly one user — no double-sells, even when thousands race for
 the same seat in the same second.
 
-Java 21 · Spring Boot 3.5 · PostgreSQL 16 · Flyway · Docker
+Java 21 · Spring Boot 3.5 · PostgreSQL 18 · Flyway · Docker
 
 > Live URL: https://book-my-seat-7pdy.onrender.com — deployed from this
 > repo via `render.yaml`. Everything below works against
