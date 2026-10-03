@@ -31,7 +31,7 @@ integration tests need Docker and skip otherwise).
 |-----|-----------------|---------|
 | `PORT` | `8080` | HTTP port (injected by PaaS — never hardcode in deploy) |
 | `DATABASE_URL` | `jdbc:postgresql://localhost:5432/book_my_seat` | JDBC URL, or provider `postgres://…` form (auto-converted) |
-| `DB_USER` / `DB_PASSWORD` | `postgres` / `root` | Local-dev defaults; always set explicitly via env in compose/deploy (ignored when `DATABASE_URL` embeds them) |
+| `DB_USER` / `DB_PASSWORD` | `${DB_USER}` / `${DB_PASSWORD}` | Local-dev defaults; always set explicitly via env in compose/deploy (ignored when `DATABASE_URL` embeds them) |
 | `JWT_SECRET` | (none — required) | HS256 secret, ≥ 32 chars, random per deploy; never shared |
 | `ADMIN_TOKEN` | `admin-token` (optional) | Static admin bearer for `POST /shows`; default works as-is, override per deploy (see Tokens) |
 | `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` | `true` | Set `false` in prod to disable `POST /auth/token` |
@@ -119,6 +119,25 @@ exits non-zero on failure. Tune via `SHOW_SEATS HOT_USERS STAMPEDE_REQUESTS
 HOT_SET STAMPEDE_USERS IDEM_RETRIES ADMIN_TOKEN` (plus `STAMPEDE_CONCURRENCY`,
 `STORM_CONCURRENCY`, `SETUP_CONCURRENCY` — sustained pressure metering, not
 one instant socket pile-on).
+
+> Live URL resource limits (Render free tier: small CPU/RAM, managed
+> Postgres connection cap, `HIKARI_MAX_POOL_SIZE=10`): run the 20k stampede
+> metered with `STAMPEDE_CONCURRENCY=50 STORM_CONCURRENCY=50
+> SETUP_CONCURRENCY=10` — defaults (1000/500/50) pile on and stall to `0/s`.
+> Same 20k total, sustained pressure:
+
+```bash
+STAMPEDE_CONCURRENCY=50 STORM_CONCURRENCY=50 SETUP_CONCURRENCY=10 STAMPEDE_REQUESTS=20000 ./burst.sh https://book-my-seat-7pdy.onrender.com
+```
+
+Observed (21,256 calls, 20k stampede + storm/replay/limit/spoof/cancel):
+
+| Env | Throughput | p50 | p95 | p99 | max |
+|-----|------------|-----|-----|-----|-----|
+| Local direct app, no Docker (`50/50/10`) | ~4251/s stampede | 14ms | 27ms | 49ms | 270ms |
+| Render free (metered 50/50/10) | ~49/s stampede | 998ms | 1899ms | 2590ms | 7088ms |
+
+Live is slower by design (shared CPU/RAM, managed-PG cap, + cold start) — same `PASS`, longer wall time.
 
 ## Design decisions (summary)
 
