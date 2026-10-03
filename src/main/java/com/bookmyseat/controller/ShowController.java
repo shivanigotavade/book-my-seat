@@ -12,9 +12,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.bookmyseat.show.CreateShowRequest;
-import com.bookmyseat.show.ShowDetailResponse;
-import com.bookmyseat.show.ShowResponse;
+import com.bookmyseat.domain.CreateShowRequest;
+import com.bookmyseat.domain.ShowDetailResponse;
+import com.bookmyseat.domain.ShowResponse;
 import com.bookmyseat.service.ShowService;
 
 /**

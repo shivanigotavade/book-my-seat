@@ -22,8 +22,11 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.bookmyseat.domain.CancelResponse;
+import com.bookmyseat.domain.CreateShowRequest;
+import com.bookmyseat.domain.ReserveOutcome;
+import com.bookmyseat.domain.ReserveResponse;
 import com.bookmyseat.security.AuthPrincipal;
-import com.bookmyseat.show.CreateShowRequest;
 import com.bookmyseat.service.ReservationService;
 import com.bookmyseat.service.ShowService;
 import com.bookmyseat.web.ApiException;

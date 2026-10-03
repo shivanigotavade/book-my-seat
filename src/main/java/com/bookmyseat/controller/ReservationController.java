@@ -11,11 +11,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.bookmyseat.reservation.CancelResponse;
+import com.bookmyseat.domain.CancelResponse;
 import com.bookmyseat.service.ReservationService;
-import com.bookmyseat.reservation.ReserveOutcome;
-import com.bookmyseat.reservation.ReserveRequest;
-import com.bookmyseat.reservation.ReserveResponse;
+import com.bookmyseat.domain.ReserveOutcome;
+import com.bookmyseat.domain.ReserveRequest;
+import com.bookmyseat.domain.ReserveResponse;
 import com.bookmyseat.security.AuthPrincipal;
 
 /**

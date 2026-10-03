@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import com.bookmyseat.domain.ApiError;
 import com.bookmyseat.observability.RequestIdFilter;
 
 import jakarta.servlet.http.HttpServletRequest;

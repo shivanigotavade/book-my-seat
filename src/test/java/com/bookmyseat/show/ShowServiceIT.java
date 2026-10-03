@@ -15,6 +15,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.bookmyseat.domain.CreateShowRequest;
+import com.bookmyseat.domain.ShowDetailResponse;
+import com.bookmyseat.domain.ShowResponse;
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.service.HealthService;
 import com.bookmyseat.service.ReservationService;

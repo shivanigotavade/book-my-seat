@@ -21,6 +21,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.bookmyseat.controller.ReservationController;
+import com.bookmyseat.domain.CancelResponse;
+import com.bookmyseat.domain.ReserveOutcome;
+import com.bookmyseat.domain.ReserveResponse;
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.service.JwtService;
 import com.bookmyseat.service.ReservationService;

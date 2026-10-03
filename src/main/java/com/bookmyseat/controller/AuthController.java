@@ -12,16 +12,13 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.bookmyseat.domain.ApiError;
+import com.bookmyseat.domain.TokenRequest;
+import com.bookmyseat.domain.TokenResponse;
 import com.bookmyseat.observability.RequestIdFilter;
 import com.bookmyseat.service.JwtService;
-import com.bookmyseat.web.ApiError;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 
 /**
  * Token issuance. Open issuance is USER-only and flagged by
@@ -46,16 +43,6 @@ public class AuthController {
 		this.tokenEndpointEnabled = tokenEndpointEnabled;
 		this.adminTokenBytes = adminToken == null ? new byte[0]
 				: adminToken.getBytes(StandardCharsets.UTF_8);
-	}
-
-	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record TokenRequest(
-			@NotBlank @Size(max = 64) @Pattern(regexp = "^[A-Za-z0-9._-]+$", message = "invalid user_id") String user_id,
-			String role) {
-	}
-
-	public record TokenResponse(String token, @JsonProperty("token_type") String tokenType,
-			@JsonProperty("user_id") String userId, String role, @JsonProperty("expires_in") long expiresIn) {
 	}
 
 	@PostMapping("/token")

@@ -15,10 +15,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.bookmyseat.entity.ShowEntity;
 import com.bookmyseat.repository.SeatRepository;
 import com.bookmyseat.repository.ShowRepository;
-import com.bookmyseat.show.CreateShowRequest;
-import com.bookmyseat.show.ShowDetailResponse;
+import com.bookmyseat.domain.CreateShowRequest;
+import com.bookmyseat.domain.ShowDetailResponse;
 import com.bookmyseat.show.ShowRequestValidator;
-import com.bookmyseat.show.ShowResponse;
+import com.bookmyseat.domain.ShowResponse;
 import com.bookmyseat.web.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 

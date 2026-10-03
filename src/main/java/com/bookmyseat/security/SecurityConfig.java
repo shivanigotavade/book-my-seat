@@ -17,7 +17,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 import com.bookmyseat.observability.RequestIdFilter;
 import com.bookmyseat.service.JwtService;
-import com.bookmyseat.web.ApiError;
+import com.bookmyseat.domain.ApiError;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import jakarta.servlet.DispatcherType;

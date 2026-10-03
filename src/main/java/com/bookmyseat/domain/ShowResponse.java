@@ -1,4 +1,4 @@
-package com.bookmyseat.show;
+package com.bookmyseat.domain;
 
 import java.util.List;
 import java.util.UUID;

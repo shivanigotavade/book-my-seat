@@ -1,4 +1,4 @@
-package com.bookmyseat.web;
+package com.bookmyseat.domain;
 
 import java.util.Map;
 

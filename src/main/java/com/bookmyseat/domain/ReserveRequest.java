@@ -1,4 +1,4 @@
-package com.bookmyseat.reservation;
+package com.bookmyseat.domain;
 
 import java.util.List;
 

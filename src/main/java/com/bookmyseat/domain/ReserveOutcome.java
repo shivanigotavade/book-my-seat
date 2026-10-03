@@ -1,4 +1,4 @@
-package com.bookmyseat.reservation;
+package com.bookmyseat.domain;
 
 /**
  * Result of a reserve call. First-time reservations are {@code replayed=false}

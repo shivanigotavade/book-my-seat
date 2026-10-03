@@ -21,6 +21,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.bookmyseat.controller.ShowController;
+import com.bookmyseat.domain.ShowDetailResponse;
+import com.bookmyseat.domain.ShowResponse;
 import com.bookmyseat.security.AuthPrincipal;
 import com.bookmyseat.service.JwtService;
 import com.bookmyseat.service.ShowService;
