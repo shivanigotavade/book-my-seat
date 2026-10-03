@@ -25,20 +25,6 @@ With observability profile: `docker compose --profile observability up --build`
 Local build without Docker: `./mvnw -B verify` (unit tests run; `*IT`
 integration tests need Docker and skip otherwise).
 
-## Configuration
-
-| Var | Default (local) | Meaning |
-|-----|-----------------|---------|
-| `PORT` | `8080` | HTTP port (injected by PaaS — never hardcode in deploy) |
-| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/book_my_seat` | JDBC URL, or provider `postgres://…` form (auto-converted) |
-| `DB_USER` / `DB_PASSWORD` | `${DB_USER}` / `${DB_PASSWORD}` | Local-dev defaults; always set explicitly via env in compose/deploy (ignored when `DATABASE_URL` embeds them) |
-| `JWT_SECRET` | (none — required) | HS256 secret, ≥ 32 chars, random per deploy; never shared |
-| `ADMIN_TOKEN` | `admin-token` (optional) | Static admin bearer for `POST /shows`; default works as-is, override per deploy (see Tokens) |
-| `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` | `true` | Set `false` in prod to disable `POST /auth/token` |
-| `JWT_EXPIRATION_SECONDS` | `86400` | Token lifetime |
-| `HIKARI_MAX_POOL_SIZE` / `HIKARI_MIN_IDLE` | `15` / `5` | Pool sizing (stay under the managed-PG connection cap) |
-| `LOG_LEVEL` | `INFO` | Root + app log level |
-
 ## Tokens
 
 ```bash
@@ -104,6 +90,36 @@ Error bodies are uniform: `{"error":{"code":"SEAT_TAKEN","message":"…",
 `RETRY_LATER` + `Retry-After`); the only intentional `5xx` is `503` from
 `/health/ready` when the database is down.
 
+## How it works
+
+- **Explicit cancel, no TTL:** reserve confirms immediately; cancel frees.
+  No expiry sweeper racing confirmations.
+- **All-or-nothing multi-seat:** any unavailable seat declines the whole
+  request; quota untouched.
+- **Replay is `200`, not `201`:** exactly one `201` per hot seat even when
+  the winner retries.
+- **DB as arbiter:** sorted `FOR UPDATE` locks + guarded
+  `UPDATE … WHERE status='available'` + partial unique index safety net;
+  per-user limit via conditional counter update; idempotency via
+  same-transaction unique key + request hash.
+- **Consistency over availability:** single Postgres primary; readiness
+  fails closed (`503`) on partition.
+
+```mermaid
+flowchart LR
+  C[Client + Idempotency-Key] --> RC[ReservationController]
+  RC --> V[Validators: seats sort + key]
+  V --> I[Idempotency gate<br/>insertIgnore]
+  I -->|replay| R200[200 + Replayed]
+  I -->|first| Q[Quota upsert<br/>if fits]
+  Q --> L[lockSeats<br/>ORDER BY FOR UPDATE]
+  L --> G[confirmSeats<br/>WHERE available]
+  G --> INS[reservations + seats + linkKey]
+  INS --> R201[201 confirmed]
+  L -.->|taken| D409[409 SEAT_TAKEN]
+  Q -.->|over limit| D429[409 PER_USER_LIMIT]
+```
+
 ## Burst (on-sale stampede)
 
 ```bash
@@ -139,20 +155,43 @@ Observed (21,256 calls, 20k stampede + storm/replay/limit/spoof/cancel):
 
 Live is slower by design (shared CPU/RAM, managed-PG cap, + cold start) — same `PASS`, longer wall time. Both logs end `RESULT: PASS` with storm `201=1 409:SEAT_TAKEN=499`, `zero 5xx / zero network errors`, and `available + held + confirmed == total_seats`.
 
-## Design decisions (summary)
+```mermaid
+xychart-beta
+    title "Local latency ms (21,256 calls)"
+    x-axis [p50, p95, p99, max]
+    y-axis "ms" 0 --> 300
+    bar [14, 27, 49, 270]
+```
 
-- **Explicit cancel, no TTL:** reserve confirms immediately; cancel frees.
-  No expiry sweeper racing confirmations.
-- **All-or-nothing multi-seat:** any unavailable seat declines the whole
-  request; quota untouched.
-- **Replay is `200`, not `201`:** exactly one `201` per hot seat even when
-  the winner retries.
-- **DB as arbiter:** sorted `FOR UPDATE` locks + guarded
-  `UPDATE … WHERE status='available'` + partial unique index safety net;
-  per-user limit via conditional counter update; idempotency via
-  same-transaction unique key + request hash.
-- **Consistency over availability:** single Postgres primary; readiness
-  fails closed (`503`) on partition.
+```mermaid
+xychart-beta
+    title "Live latency ms (21,256 calls)"
+    x-axis [p50, p95, p99, max]
+    y-axis "ms" 0 --> 7200
+    bar [998, 1899, 2590, 7088]
+```
+
+```mermaid
+xychart-beta
+    title "Stampede throughput req/s"
+    x-axis [Local, Live]
+    y-axis "req/s" 0 --> 4500
+    bar [4251, 49]
+```
+
+## Configuration
+
+| Var | Default (local) | Meaning |
+|-----|-----------------|---------|
+| `PORT` | `8080` | HTTP port (injected by PaaS — never hardcode in deploy) |
+| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/book_my_seat` | JDBC URL, or provider `postgres://…` form (auto-converted) |
+| `DB_USER` / `DB_PASSWORD` | `${DB_USER}` / `${DB_PASSWORD}` | Local-dev defaults; always set explicitly via env in compose/deploy (ignored when `DATABASE_URL` embeds them) |
+| `JWT_SECRET` | (optional) | HS256 secret, ≥ 32 chars, random per deploy; never shared |
+| `ADMIN_TOKEN` | `admin-token` | Static admin bearer for `POST /shows`; default works as-is, override per deploy (see Tokens) |
+| `AUTH_DEV_TOKEN_ENDPOINT_ENABLED` | `true` | Set `false` in prod to disable `POST /auth/token` |
+| `JWT_EXPIRATION_SECONDS` | `86400` | Token lifetime |
+| `HIKARI_MAX_POOL_SIZE` / `HIKARI_MIN_IDLE` | `15` / `5` | Pool sizing (stay under the managed-PG connection cap) |
+| `LOG_LEVEL` | `INFO` | Root + app log level |
 
 Details, trade-offs and next steps: [`WRITEUP.md`](WRITEUP.md).
 AI usage is disclosed there as required.

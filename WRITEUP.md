@@ -1,183 +1,98 @@
 # Book My Seat — Write-up
 
+> 20k stampede, one winner per hot seat, zero `5xx`, invariant holds.
+> Proof: [`README.md`](README.md) burst table + [`burst_logs/local_stampede.txt`](burst_logs/local_stampede.txt) + [`burst_logs/live_stampede.txt`](burst_logs/live_stampede.txt) — both end `RESULT: PASS`.
+
+## TL;DR
+
+| Guarantee | How | Where |
+|---|---|---|
+| No double-sell | Sorted `FOR UPDATE` + guarded `UPDATE … WHERE available` + partial unique index | `service/ReservationService`, `repository/SeatRepository#lockSeats/confirmSeats` |
+| Per-user limit 4 | Conditional `INSERT … ON CONFLICT DO UPDATE … WHERE fits` | `repository/UserShowQuotaRepository#upsertIncrementIfFits` |
+| Exactly-once retry | Same-tx key `(user,show,key)` + `SHA-256(show\|seats)` | `repository/IdempotencyKeyRepository`, `validator/*`, `domain/*` |
+| Zero `5xx` | Domain → `4xx`, contention → `429`, retry 3× outside tx | `exception/handler/*`, `common/TransactionRetry` |
+| Invariant | Single-snapshot read | `service/ShowService#getShow` |
+| Token identity | JWT/`ADMIN_TOKEN` → `AuthPrincipal`, owner-check on cancel | `security/*`, `controller/*` |
+
 ## The atomic decision
 
-The reserve path (`ReservationService.reserveTx`) runs one `READ COMMITTED`
-transaction with a fixed global lock order:
+`service/ReservationService#reserveTx` runs one `READ COMMITTED` transaction in global lock order:
 
-1. idempotency row — `INSERT INTO idempotency_keys … ON CONFLICT DO NOTHING`
-2. quota row — lazy upsert, then conditional
-   `UPDATE user_show_quota SET active_seats = active_seats + :n WHERE … active_seats + :n <= :limit`
-3. seats, sorted — `SELECT seat_label, status FROM seats WHERE show_id = ?
-   AND seat_label = ANY(?) ORDER BY seat_label FOR UPDATE`
-4. reservation row — plain insert (no contention on a fresh UUID)
+1. Idempotency row — `INSERT … ON CONFLICT DO NOTHING`
+2. Quota row — `upsertIncrementIfFits` (row lock serialises same user)
+3. Seats sorted — `SELECT … ORDER BY seat_label FOR UPDATE`
+4. Reservation row — fresh UUID insert, no contention
 
-It is race-free because the decision is taken **while holding a row lock on
-every requested seat** and the state check is re-evaluated after the locks
-are acquired: 500 transactions on `A12` queue behind the first; the winner
-commits `confirmed`; each follower acquires the lock, sees `confirmed`, and
-declines with `409 SEAT_TAKEN`. A guarded
-`UPDATE seats … WHERE status='available'` (affected-rows must equal the
-request size) re-checks at write time — belt and braces. The partial unique
-index `ON reservation_seats (show_id, seat_label) WHERE active` makes a
-double-hold impossible even if this logic had a bug.
+Race-free because the decision is taken **while holding every seat lock** and re-checked after: 500×`A12` queue, winner commits `confirmed`, followers see `confirmed` → `409 SEAT_TAKEN`. Belt-and-braces guarded write (rows must equal request size) + partial unique `ON (show_id, seat_label) WHERE active` makes double-hold impossible even with an app bug.
 
-Deadlock freedom for multi-seat: every request normalises labels to sorted
-order first, so `["A1","A2"]` and `["A2","A1"]` lock identically. Residual
-transient contention (`40P01` deadlock, `40001` serialization, `55P03` lock
-timeout, pool acquisition) retries up to 3× with jittered backoff **outside**
-the transaction boundary (`common/TransactionRetry`), then `429
-RETRY_LATER` — never a 5xx. Session `lock_timeout 8s` / `statement_timeout
-25s` bound worst-case waits.
+Multi-seat is all-or-nothing: any unavailable seat declines all, quota rolls back. Sorted labels mean `[A1,A2]` and `[A2,A1]` lock identically — no deadlock. Leftover transient contention (`40P01`/`40001`/`55P03`/pool) retries 3× with jitter **outside** the tx, then `429 RETRY_LATER`. `lock_timeout 8s` / `statement_timeout 25s` bound waits. Only pre-lock read is immutable show config (cached); no read-then-write on contested rows.
 
-There is intentionally no read-then-write on the hot path: the only
-pre-lock read is the immutable show row (price, limit); everything contested
-is decided under lock.
+```mermaid
+flowchart LR
+  C[Client + Idempotency-Key] --> RC[ReservationController]
+  RC --> V[Validators: seats sort + key]
+  V --> I[Idempotency gate]
+  I -->|first| Q[Quota upsert if fits]
+  Q --> L[lockSeats FOR UPDATE]
+  L --> G[confirmSeats WHERE available]
+  G --> INS[reservations + linkKey]
+  INS --> R201[201 confirmed]
+```
 
 ## Idempotency
 
-The key (body `idempotency_key` or `Idempotency-Key` header; differing both
-→ `400`) is scoped per user **and show** with
-`UNIQUE (user_id, show_id, idempotency_key)` (re-keyed in G30: global scope
-turned every rerun on a fresh show into a false reuse conflict) and written
-**in the same transaction** as the reservation — exactly-once is
-enforced by the database, not app memory. The fingerprint is
-`SHA-256(show_id | sorted seats)` (`idempotency/RequestHasher`).
+Key from `Idempotency-Key` header or `idempotency_key` body (differ → `400`), scoped `(user_id, show_id, key)` — same key on another show is independent (V2 re-key). Fingerprint `SHA-256(show_id | sorted seats)` (`idempotency/RequestHasher`). Stored **in the same transaction** as the reservation, so exactly-once is DB-enforced:
 
-- First sight: key row inserts, flow continues; `reservation_id` is linked
-  onto the key before commit.
-- Same key + same hash: the stored reservation returns with `200` +
-  `Idempotent-Replayed: true` **before** quota/seats are touched — no counter
-  movement, and exactly one `201` per hot seat even when the winner retries
-  (hence `200`, not a second `201`).
+- First sight: key inserts, `reservation_id` linked before commit.
+- Same key + same hash: stored reservation returns `200 + Idempotent-Replayed: true` before quota/seats move — one `201` per hot seat.
 - Same key + different hash: `409 IDEMPOTENCY_KEY_REUSED`.
-- A declined first attempt rolls back the key row with it, so the key stays
-  reusable; a concurrent same-key transaction blocks on the key row until the
-  first commits/aborts, so there is no double-reserve window.
+- Declined first attempt rolls back the key → reusable. Concurrent same-key blocks on the key row — no double window.
 
 ## Holds & expiry
 
-Explicit-cancel model: reserve confirms immediately (`confirmed`), and
-`POST /reservations/{id}/cancel` is the only release path. Chosen over TTL
-expiry to avoid a sweeper racing confirmations (a sweeper freeing a seat
-mid-payment is a whole failure class deleted). Cancel follows the same lock
-order (quota → seats sorted → reservation), uses guarded transitions on
-**both** sides — `UPDATE reservations … WHERE status='confirmed'` and
-`UPDATE seats … WHERE reservation_id = ? AND status IN ('held','confirmed')`
-— so a late duplicate cancel can never free a seat re-booked to a new owner
-(the `reservation_id` no longer matches). Repeat cancel is idempotent `200`
-with no double decrement; a lost concurrent-cancel race rolls back fully and
-re-reads into the same `200`. Quota counts `held + confirmed` and decrements
-on cancel.
+Explicit cancel only: reserve → `confirmed` immediately, `POST /reservations/{id}/cancel` is the sole release. No TTL sweeper racing confirms. Cancel keeps lock order (quota → seats sorted → reservation) with guarded transitions on both sides (`reservations WHERE status='confirmed'`, `seats WHERE reservation_id=:id`) — a late duplicate cancel never frees a re-booked seat. Repeat cancel → idempotent `200`, no double decrement. Quota counts active seats, decrements on cancel.
 
 ## Consistency vs availability under a partition
 
-Single Postgres primary is the source of truth: we choose consistency and
-fail closed. If the database is unreachable or wedged, `/health/ready`
-returns `503` (2s-bounded `SELECT 1`) so orchestrators and reviewers stop
-sending traffic instead of double-selling; business endpoints shed
-contention as `429`, never guess. During failover writes block or fail and
-surface as `429`/`503`, then recover without restarts — no split-brain
-reservation state, at the cost of refusing bookings while partitioned. Read
-replicas (future) would serve only show-state reads, never the decision.
+Single Postgres primary = source of truth: choose consistency, fail closed. DB down/wedged → `/health/ready` `503` (2s `SELECT 1`); business endpoints shed as `429`, never guess. No split-brain; bookings refuse while partitioned, recover without restart. Replicas (future) serve only show-state reads, never the decision.
 
 ## Observability — what pages at 2am
 
-- **Readiness failing** (`/health/ready` ≠ 200): DB down or wedged — page.
-- **Any 5xx on business endpoints**: must be zero; the catch-all 500 means
-  an unknown bug, not contention.
-- **`429` rate spike / `bookmyseat_tx_retries_total{cause}` spike**: contention
-  beyond design (deadlock/serialization/lock-timeout) — scale pool or shed load.
-- **p99 latency** (`http_server_requests_seconds`): queueing behind row locks
-  or pool exhaustion.
-- **Hikari saturation** (`hikaricp_connections_pending`): raise pool (within
-  the PG cap) or add the bulkhead noted below.
-- **Invariant drift**: `seats_available` gauge vs `GET /shows/{id}` counts,
-  or `confirmed_total` vs client `201`s — indicates a counting bug, page.
-- **`reservations_confirmed` rate anomalies**: drop to zero during on-sale =
-  upstream or DB stall.
+- `ready != 200`: DB down — page.
+- Any `5xx` on business routes: must be zero — page.
+- `429` / `tx_retries_total{cause}` spike: contention beyond design.
+- `p99` (`http_server_requests_seconds`): lock/pool queueing.
+- `hikaricp_connections_pending`: pool saturated (stay under PG cap).
+- Gauge drift (`seats_available` vs `GET /shows`, `confirmed_total` vs client `201`s): counting bug — page.
+- `reservations_confirmed` → 0 during on-sale: upstream/DB stall.
 
-Every response carries `X-Request-Id` (accepted inbound or generated),
-echoed in error bodies and JSON logs (`request_id,user_id,show_id,
-idempotency_key` truncated, `outcome`) with one line per decision
-(`reservation.confirmed/declined/replayed/cancelled`). Given a `request_id`,
-one log search finds the decision. Logs: stdout JSON (platform log view in
-prod).
+Every response carries `X-Request-Id` (inbound or generated) echoed in `ApiError` (`domain/ApiError`) + JSON logs (`request_id,user_id,show_id,key` preview) with one line per decision (`confirmed/declined/replayed/cancelled`). Logs: stdout JSON in prod, rolling file locally.
+
+## Proven numbers
+
+21,256 calls, metered `50/50/10`:
+
+| Env | Throughput | p50 | p95 | p99 | max |
+|-----|------------|-----|-----|-----|-----|
+| Local direct, no Docker | ~4251/s | 14ms | 27ms | 49ms | 270ms |
+| Render free | ~49/s | 998ms | 1899ms | 2590ms | 7088ms |
+
+Full evidence in [`README.md`](README.md) + `burst_logs/`.
+
+## Performance notes
+
+Same guarantees, fewer round trips: cached immutable show config, single-statement quota upsert, JDBC batching, env-driven pool. Lock order, retry, logging untouched. Burst meters concurrency so 20k measures sustained pressure, not socket pile-on.
 
 ## What I'd do next
 
-TTL holds + expiry sweeper (guarded on `reservation_id`, confirm guarded on
-non-expiry) · payment step as hold → pay → confirm saga with compensation ·
-per-user/IP rate limiting + virtual waiting room · seat categories / dynamic
-pricing in the amount calculation · sharded hot shows and Redis pre-filter ·
-read replicas for show state · outbox events for downstream consumers.
+TTL holds + guarded sweeper · hold → pay → confirm saga · per-user/IP limits + waiting room · categories/pricing · sharded hot shows + Redis pre-filter · read replicas for state · outbox events.
 
-## Performance notes (G31)
+## AI usage
 
-Same guarantees, fewer round trips per reserve: immutable show config is
-cached in memory (no invalidation needed); quota upsert + conditional
-increment merged into one `INSERT … ON CONFLICT DO UPDATE … WHERE fits`
-(zero rows ⇒ `409`); Hibernate JDBC batching for multi-row writes; pool
-sizing left env-driven per environment. Lock ordering, retry policy and
-logging deliberately untouched. Burst client meters concurrency
-(`STAMPEDE/STORM/SETUP_CONCURRENCY`) and retries transport failures on
-idempotent-safe paths, so a 20k run measures sustained pressure, not socket
-pile-on.
+Built with OpenCode/Muse Spark, per-goal direction:
 
-## AI usage (G22 disclosure log)
+**Directed:** Flyway over `ddl-auto`, G1→G22 order, all-or-nothing/explicit-cancel/replay-`200`/consistency-first policies, Render target, `domain`/`validator`/`exception.handler` package moves.
 
-Built with an agentic coding assistant (OpenCode, Muse Spark) under
-per-goal direction. Honest split:
+**Decided:** conditional quota SQL, `TransactionTemplate` + retry helper, `SNAKE_CASE`, aggregate gauges, `set_config` timeouts, `EnvironmentPostProcessor` URL rewrite, single-file burst.
 
-**Directed — I chose, the agent executed.** Flyway over
-`ddl-auto=create` (I initially picked `ddl-auto`, then reversed after the
-agent laid out the costs: no partial-index/`CHECK` support, data loss on
-restart, DoD failure); goal sequencing G1→G22; the brief's locked policies
-(all-or-nothing, explicit cancel, replay-`200`, consistency-over-availability);
-Render as deploy target; when to push.
-
-**Decided — the agent proposed, I accepted.** `JdbcTemplate` over JPA on
-all paths; `SHA-256(show_id | sorted seats)` fingerprint format;
-conditional-update quota SQL; programmatic `TransactionTemplate` + retry
-helper instead of `@Transactional`/`spring-retry`; global `SNAKE_CASE`;
-aggregate (label-free) gauges; `set_config` session-timeout init SQL;
-`EnvironmentPostProcessor` URL normalization instead of a hand-built
-`DataSource` bean; Java single-file burst over k6.
-
-**Rejected or fixed in review (with evidence).**
-- `ddl-auto=create`: rejected post-discussion (see above).
-- `@Valid` on `DevTokenController` produced Boot-default 400 bodies
-  instead of the uniform `ApiError` — caught by
-  `DevTokenControllerTest.invalidUserIdIs400`, replaced with manual
-  validation (`fix` visible in history).
-- `@WebMvcTest` silently falling back to default security (all-POST 403
-  with empty bodies) — caught by `ShowControllerTest`, fixed with explicit
-  `@Import(SecurityConfig.class)`.
-- Read-then-write audit (the unsafe pattern from the brief): verified the
-  only pre-lock read is the immutable show row; every contested read holds
-  `FOR UPDATE` locks. The cancel path had a real instance of the cousin
-  bug — concurrent double-cancel double-decrementing quota — identified
-  while writing it and fixed with guarded-transition + rollback-and-reread
-  before any test ran (`concurrentDoubleCancelIsIdempotent` now proves it).
-- Burst `code()` helper mis-parsing the nested `error` object (would have
-  broken every 409 assertion) — caught in self-review pre-compile; plus
-  `CannotGetJdbcConnectionException` (spring-jdbc, not spring-dao) and the
-  Micrometer 1.16 `prometheusmetrics` rename — caught by compiler/tests.
-
-I can extend this live: every lock's order is documented in
-`ReservationService`'s javadoc, and each guarantee has a named
-Testcontainers test (`ReserveServiceIT`, `SchemaInvariantIT`,
-`ShowServiceIT`) runnable via `./mvnw verify`.
-
-**Addendum — JPA migration (post-G22, user-directed).** The user asked to
-replace `JdbcTemplate` with JPA repositories + entities and update the spec
-accordingly (§2 table now says so; Flyway still owns DDL with
-`ddl-auto=validate`). The agent's constraint, accepted: JPQL cannot express
-sorted `FOR UPDATE` locking, guarded conditional updates, or bulk insert, so
-contested paths remain native `@Query` *inside* the repositories
-(`lockSeats`, `confirmSeats`, quota/idempotency gates, jsonb bulk insert) —
-the atomicity argument above is unchanged, only the plumbing moved from
-`JdbcTemplate` to repositories. Deliberately not `@Version`: concurrency is
-governed by pessimistic locks, and managed entities are never re-read after
-a native write in the same transaction. Concurrency proofs re-run unchanged
-in CI (`./mvnw verify`).
+**Rejected/fixed:** `ddl-auto=create` (no partial-index support); `@Valid` non-uniform 400s → manual validation; `@WebMvcTest` default-security 403s → explicit `@Import(SecurityConfig)`; cancel double-decrement → guarded-transition + reread; burst `code()` nested-error parse; `prometheusmetrics` rename. Concurrency proofs (`ReserveServiceIT`, `ShowServiceIT`, `./mvnw verify`) re-run in CI.
